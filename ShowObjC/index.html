@@ -591,9 +591,7 @@
 <!-- Toolbar -->
 <div id="toolbar">
   <div class="tb-group">
-    <button class="tb-btn" title="添加文字" id="btn-text">T</button>
-    <button class="tb-btn" title="清空画布" id="btn-clear">🗑</button>
-    <button class="tb-btn" title="全屏" id="btn-fullscreen">⛶</button>
+    <button class="tb-btn" title="录制" id="btn-record">⏺</button>
   </div>
   <div class="tb-group" id="background-group">
     <select id="bg-preset" class="tb-select" title="背景样式">
@@ -618,7 +616,6 @@
   </div>
   <div class="tb-group">
     <button class="tb-btn" title="摄像头 (小镜头)" id="btn-camera">📷</button>
-    <button class="tb-btn" title="录制" id="btn-record">⏺</button>
     <button class="tb-btn" title="录制设置" id="btn-rec-settings">⚙</button>
   </div>
 </div>
@@ -1658,8 +1655,12 @@ toolbarOpacitySlider.addEventListener('input', () => {
 });
 
 async function startRecording() {
-  // Use WebM MediaRecorder (works in all browsers + WKWebView)
-  await startRecordingWebM();
+  try {
+    await startRecordingMP4();
+  } catch (e) {
+    console.log('MP4 failed, fallback to WebM:', e);
+    await startRecordingWebM();
+  }
 }
 
 // ─── MP4 Pipeline (WebCodecs + mp4-muxer) ───
@@ -2143,40 +2144,6 @@ document.addEventListener('visibilitychange', () => {
   if (recording && document.hidden) {
     // User might have stopped sharing
   }
-});
-
-// ─── Toolbar buttons ───
-document.getElementById('btn-clear').addEventListener('click', () => {
-  if (canvas.children.length === 0) return;
-  if (confirm('确定清空画布?')) {
-    // Don't remove camera PiP
-    const items = canvas.querySelectorAll('.canvas-item');
-    items.forEach(el => el.remove());
-    selectedItem = null;
-    showToast('画布已清空');
-  }
-});
-
-document.getElementById('btn-text').addEventListener('click', () => {
-  const text = prompt('输入文字：');
-  if (text && text.trim()) {
-    addText(text.trim());
-    showToast('文字已添加');
-  }
-});
-
-document.getElementById('btn-fullscreen').addEventListener('click', () => {
-  if (document.fullscreenElement) {
-    document.exitFullscreen();
-  } else {
-    document.documentElement.requestFullscreen();
-  }
-});
-
-document.addEventListener('fullscreenchange', () => {
-  const btn = document.getElementById('btn-fullscreen');
-  btn.textContent = document.fullscreenElement ? '⛶' : '⛶';
-  btn.classList.toggle('active', !!document.fullscreenElement);
 });
 
 // ─── Toolbar drag ───
