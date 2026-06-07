@@ -1,2 +1,6 @@
 preview*.png
 .worktrees/
+ShowObjC/Show.app/
+ShowObjC/index.html
+ShowObjC/mp4-muxer.mjs
+view_img.html

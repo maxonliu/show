@@ -55,15 +55,8 @@
     border-radius: 14px;
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-    opacity: 0;
-    transition: opacity 0.25s ease, transform 0.25s ease;
-    pointer-events: none;
     z-index: 100;
     white-space: nowrap;
-  }
-  #toolbar.visible {
-    opacity: 1;
-    pointer-events: auto;
   }
 
   .tb-group {
@@ -543,6 +536,32 @@
     50% { opacity: 0.3; }
   }
 
+  /* ─── Floating Stop Button (recording) ─── */
+  #stop-btn {
+    position: fixed;
+    bottom: 32px; left: 50%;
+    transform: translateX(-50%);
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: #ff3b30;
+    border: 3px solid rgba(255,255,255,0.3);
+    cursor: pointer;
+    z-index: 999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 20px rgba(255,59,48,0.5);
+    transition: transform 0.15s;
+  }
+  #stop-btn:hover { transform: translateX(-50%) scale(1.1); }
+  #stop-btn::after {
+    content: '';
+    width: 16px; height: 16px;
+    background: #fff;
+    border-radius: 3px;
+  }
+  #stop-btn.show { display: flex; }
+
   /* ─── Toast ─── */
   #toast {
     position: fixed;
@@ -610,6 +629,9 @@
     <button class="tb-btn" title="录制设置" id="btn-rec-settings">⚙</button>
   </div>
 </div>
+
+<!-- Floating Stop Button -->
+<div id="stop-btn" title="停止录制"></div>
 
 <!-- Recording Countdown Overlay -->
 <div id="recording-overlay">
@@ -802,7 +824,12 @@ const recOverlay = document.getElementById('recording-overlay');
 const countNum = document.getElementById('countdown-num');
 const recTimer = document.getElementById('recording-timer');
 const recTime = document.getElementById('rec-time');
+const stopBtn = document.getElementById('stop-btn');
 let recTimerInterval = null;
+
+stopBtn.addEventListener('click', async () => {
+  if (recording) await stopRecording();
+});
 
 // ─── Toast ───
 let toastTimer = null;
@@ -1408,20 +1435,10 @@ async function startRecordingFlow() {
   recOverlay.classList.remove('show');
   recordingCountdown = false;
 
-  if (isNative) {
-    // ─── Native app: use ScreenCaptureKit ───
-    recording = true;
-    recordBtn.classList.add('recording');
-    recordBtn.textContent = '⏹';
-    hideToolbar();
-    showToast('⏺ 正在录制...');
+  // Browser recording (works in WKWebView too)
+  await startRecording();
 
-    window.webkit.messageHandlers.startRecording.postMessage({
-      fps: recSettings.fps,
-      bitrate: recSettings.bitrate,
-    });
-
-    // Show timer (native will call __nativeRecordingStarted for fine-grained control)
+  if (recording) {
     recTimer.classList.add('show');
     let seconds = 0;
     recTime.textContent = '00:00';
@@ -1437,27 +1454,6 @@ async function startRecordingFlow() {
       const s = (seconds % 60).toString().padStart(2, '0');
       recTime.textContent = m + ':' + s;
     }, 1000);
-  } else {
-    // ─── Browser: use WebCodecs / MediaRecorder ───
-    await startRecording();
-
-    if (recording) {
-      recTimer.classList.add('show');
-      let seconds = 0;
-      recTime.textContent = '00:00';
-      recTimerInterval = setInterval(() => {
-        if (!recording) {
-          clearInterval(recTimerInterval);
-          recTimerInterval = null;
-          recTimer.classList.remove('show');
-          return;
-        }
-        seconds++;
-        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-        const s = (seconds % 60).toString().padStart(2, '0');
-        recTime.textContent = m + ':' + s;
-      }, 1000);
-    }
   }
 }
 
@@ -1465,12 +1461,7 @@ const recordBtn = document.getElementById('btn-record');
 
 recordBtn.addEventListener('click', async () => {
   if (recording) {
-    if (isNative) {
-      // Native app: tell Swift to stop recording
-      window.webkit.messageHandlers.stopRecording.postMessage({});
-    } else {
-      await stopRecording();
-    }
+    await stopRecording();
   } else {
     await startRecordingFlow();
   }
@@ -1518,16 +1509,7 @@ recBitrateSelect.addEventListener('change', () => {
 });
 
 async function startRecording() {
-  // Try WebCodecs MP4 first, fall back to MediaRecorder WebM
-  if ('VideoEncoder' in window && 'VideoFrame' in window) {
-    try {
-      await startRecordingMP4();
-      return;
-    } catch (e) {
-      console.warn('MP4 recording failed, falling back to WebM:', e);
-      showToast('MP4 编码不支持，回退 WebM');
-    }
-  }
+  // Use WebM MediaRecorder (works in all browsers + WKWebView)
   await startRecordingWebM();
 }
 
@@ -1544,6 +1526,8 @@ async function startRecordingMP4() {
   const vSettings = videoTrack.getSettings();
   const width = vSettings.width || 1920;
   const height = vSettings.height || 1080;
+  const toolbarH = 64; // toolbar area to exclude from recording
+  const croppedHeight = height - toolbarH;
 
   // Hidden video to receive the display stream
   encVideo = document.createElement('video');
@@ -1553,10 +1537,10 @@ async function startRecordingMP4() {
   encVideo.playsInline = true;
   await encVideo.play();
 
-  // Canvas for frame extraction
+  // Canvas for frame extraction (crop toolbar)
   encCanvas = document.createElement('canvas');
   encCanvas.width = width;
-  encCanvas.height = height;
+  encCanvas.height = croppedHeight;
   const ctx = encCanvas.getContext('2d');
 
   // Dynamic import mp4-muxer
@@ -1564,7 +1548,7 @@ async function startRecordingMP4() {
 
   const muxerConfig = {
     target: new ArrayBufferTarget(),
-    video: { codec: 'avc', width, height },
+    video: { codec: 'avc', width, height: croppedHeight },
     fastStart: 'in-memory',
   };
 
@@ -1589,7 +1573,7 @@ async function startRecordingMP4() {
   videoEncoder.configure({
     codec,
     width,
-    height,
+    height: croppedHeight,
     bitrate: recSettings.bitrate * 1_000_000,
     framerate: recSettings.fps,
     avc: { format: 'avc' },
@@ -1646,7 +1630,8 @@ async function startRecordingMP4() {
     if (elapsed < frameInterval - 5) return;
     lastFrameTime = timestamp - (elapsed % frameInterval);
 
-    ctx.drawImage(encVideo, 0, 0, width, height);
+    // Crop: draw top portion only, exclude bottom toolbar
+    ctx.drawImage(encVideo, 0, 0, width, croppedHeight, 0, 0, width, croppedHeight);
     const frame = new VideoFrame(encCanvas, {
       timestamp: Math.round(timestamp * 1000),
       duration: Math.round(1_000_000 / fps),
@@ -1659,7 +1644,7 @@ async function startRecordingMP4() {
   recording = true;
   recordBtn.classList.add('recording');
   recordBtn.textContent = '⏹';
-  hideToolbar();
+  stopBtn.classList.add('show');
   const label = audioTrack ? 'MP4 + 音频' : 'MP4 (无音频)';
   showToast('⏺ 正在录制 ' + label + '...');
   animId = requestAnimationFrame(captureFrame);
@@ -1778,7 +1763,7 @@ async function startRecordingWebM() {
   recording = true;
   recordBtn.classList.add('recording');
   recordBtn.textContent = '⏹';
-  hideToolbar();
+  stopBtn.classList.add('show');
   showToast('⏺ 正在录制 WebM...');
 }
 
@@ -1804,6 +1789,7 @@ async function stopRecording() {
   recording = false;
   recordBtn.classList.remove('recording');
   recordBtn.textContent = '⏺';
+  stopBtn.classList.remove('show');
 
   if (recTimerInterval) {
     clearInterval(recTimerInterval);
@@ -1857,6 +1843,16 @@ document.addEventListener('fullscreenchange', () => {
 
 // ─── Init ───
 
+// Focus hidden textarea so paste events fire (WKWebView needs an editable element focused)
+textEditor.focus();
+
+// When clicking on the canvas, re-focus the hidden textarea to keep paste working
+canvas.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('.text-content[contenteditable]')) {
+    textEditor.focus();
+  }
+});
+
 // Show welcome toast
 setTimeout(() => {
   const hasCam = cameraActive ? ' 📹' : '';
@@ -1892,6 +1888,7 @@ window.__nativeRecordingStopped = function() {
   recording = false;
   recordBtn.classList.remove('recording');
   recordBtn.textContent = '⏺';
+  stopBtn.classList.remove('show');
 
   if (recTimerInterval) {
     clearInterval(recTimerInterval);
