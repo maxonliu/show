@@ -40,6 +40,17 @@
     inset: 0;
   }
 
+  #window-drag-region {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 44px;
+    z-index: 6000;
+    -webkit-app-region: drag;
+    pointer-events: auto;
+  }
+
   /* ─── Toolbar ─── */
   #toolbar {
     position: absolute;
@@ -302,7 +313,7 @@
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: 0 4px 24px rgba(0,0,0,0.6);
     z-index: 150;
-    min-width: 200px;
+    min-width: 240px;
   }
   #rec-settings.open { display: flex; }
 
@@ -359,6 +370,9 @@
     font-size: 11px;
     min-width: 30px;
     text-align: right;
+  }
+  #rec-settings .cs-row label {
+    min-width: 64px;
   }
 
   .cs-toggle {
@@ -455,7 +469,10 @@
   }
 
   /* ─── Preset buttons ─── */
-  .preset-btn { font-size: 13px; }
+  .preset-btn {
+    font-size: 14px;
+    font-weight: 700;
+  }
   .preset-btn.active { color: var(--accent); background: rgba(91,154,255,0.15); }
 
   /* ─── Recording Overlay (countdown) ─── */
@@ -558,13 +575,15 @@
   #toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
-
+  }
 
   /* ─── Scrollbar hide ─── */
   ::-webkit-scrollbar { display: none; }
 </style>
 </head>
 <body>
+
+<div id="window-drag-region"></div>
 
 <!-- Main Canvas -->
 <div id="canvas-wrap">
@@ -594,10 +613,10 @@
     <input type="color" id="color-picker" value="#ffffff" style="width:22px;height:22px;border:none;border-radius:50%;cursor:pointer;padding:0;flex-shrink:0;background:none">
   </div>
   <div class="tb-group" id="preset-group">
-    <button class="tb-btn preset-btn" data-preset="9:16" title="抖音 9:16">🎵</button>
-    <button class="tb-btn preset-btn" data-preset="3:4" title="小红书 3:4">📕</button>
-    <button class="tb-btn preset-btn" data-preset="6:7" title="视频号 6:7">📺</button>
-    <button class="tb-btn preset-btn" data-preset="16:9" title="横屏 16:9">🖥</button>
+    <button class="tb-btn preset-btn" data-preset="9:16" title="抖音 9:16">抖</button>
+    <button class="tb-btn preset-btn" data-preset="3:4" title="小红书 3:4">红</button>
+    <button class="tb-btn preset-btn" data-preset="6:7" title="视频号 6:7">视</button>
+    <button class="tb-btn preset-btn" data-preset="16:9" title="横屏 16:9">横</button>
     <button class="tb-btn preset-btn active" data-preset="free" title="自适应">↔</button>
   </div>
   <div class="tb-group">
@@ -678,6 +697,11 @@
       <option value="20">20 Mbps</option>
       <option value="30" selected>30 Mbps</option>
     </select>
+  </div>
+  <div class="cs-row">
+    <label>工具栏透明</label>
+    <input type="range" id="toolbar-opacity" min="35" max="95" value="85">
+    <span class="cs-val" id="toolbar-opacity-val">85%</span>
   </div>
 </div>
 
@@ -787,6 +811,7 @@ const toolbar = document.getElementById('toolbar');
 const toast = document.getElementById('toast');
 const ctxMenu = document.getElementById('ctx-menu');
 const textEditor = document.getElementById('text-editor');
+const windowDragRegion = document.getElementById('window-drag-region');
 
 const camPip = document.getElementById('camera-pip');
 const camVideo = document.getElementById('camera-video');
@@ -818,6 +843,14 @@ function showToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2000);
 }
+
+windowDragRegion.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  console.log('window drag start', e.clientX, e.clientY);
+  if (isNative && window.webkit?.messageHandlers?.startWindowDrag) {
+    window.webkit.messageHandlers.startWindowDrag.postMessage({});
+  }
+});
 
 // ─── Toolbar ───
 function showToolbar() {
@@ -1108,28 +1141,66 @@ document.addEventListener('mouseup', () => {
 });
 
 // ─── Paste (Cmd+V) ───
-document.addEventListener('paste', async (e) => {
-  e.preventDefault();
-  const items = e.clipboardData.items;
+function pasteCenterPoint() {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: rect.width / 2 - 120,
+    y: rect.height / 2 - 80,
+  };
+}
+
+async function handleClipboardItems(items, x, y) {
   let handled = false;
   for (const item of items) {
-    if (item.type.startsWith('image/')) {
-      const file = item.getAsFile();
+    const type = item.type || (item.types && item.types[0]) || '';
+    if (type.startsWith('image/')) {
+      const file = item.getAsFile ? item.getAsFile() : await item.getType(type);
       if (!file) continue;
       const url = URL.createObjectURL(file);
-      addImage(url, e.clientX || 100, e.clientY || 100);
+      addImage(url, x, y);
       handled = true;
       showToast('图片已粘贴');
-    } else if (item.type === 'text/plain') {
-      item.getAsString(text => {
+    } else if (type === 'text/plain') {
+      if (item.getAsString) {
+        item.getAsString(text => {
+          if (text.trim()) {
+            addText(text.trim(), x, y);
+            showToast('文字已粘贴');
+          }
+        });
+      } else {
+        const text = await (await item.getType('text/plain')).text();
         if (text.trim()) {
-          addText(text.trim(), e.clientX || 100, e.clientY || 100);
+          addText(text.trim(), x, y);
           showToast('文字已粘贴');
         }
-      });
+      }
       handled = true;
     }
   }
+  return handled;
+}
+
+window.__nativePasteImage = function(dataUrl) {
+  const p = pasteCenterPoint();
+  addImage(dataUrl, p.x, p.y);
+  showToast('图片已粘贴');
+};
+
+window.__nativePasteText = function(text) {
+  const p = pasteCenterPoint();
+  addText(text, p.x, p.y);
+  showToast('文字已粘贴');
+};
+
+document.addEventListener('paste', async (e) => {
+  e.preventDefault();
+  if (isNative && window.webkit?.messageHandlers?.pasteFromClipboard) {
+    window.webkit.messageHandlers.pasteFromClipboard.postMessage({});
+    return;
+  }
+  const p = pasteCenterPoint();
+  const handled = await handleClipboardItems(e.clipboardData.items, p.x, p.y);
   if (!handled) {
     showToast('剪贴板内容不支持');
   }
@@ -1162,6 +1233,23 @@ canvasWrap.addEventListener('drop', (e) => {
 
 // ─── Keyboard shortcuts ───
 document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
+    if (e.target && e.target.closest && e.target.closest('.text-content[contenteditable]')) return;
+    e.preventDefault();
+    if (isNative && window.webkit?.messageHandlers?.pasteFromClipboard) {
+      window.webkit.messageHandlers.pasteFromClipboard.postMessage({});
+      return;
+    }
+    const p = pasteCenterPoint();
+    navigator.clipboard.read().then(async items => {
+      const handled = await handleClipboardItems(items, p.x, p.y);
+      if (!handled) showToast('剪贴板内容不支持');
+    }).catch(() => {
+      textEditor.focus();
+      document.execCommand('paste');
+    });
+    return;
+  }
   if ((e.key === 'Delete' || e.key === 'Backspace') && selectedItem) {
     if (e.target === textEditor) return;
     deleteItem(selectedItem);
@@ -1462,6 +1550,8 @@ const recSettingsPanel = document.getElementById('rec-settings');
 const btnRecSettings = document.getElementById('btn-rec-settings');
 const recFpsSelect = document.getElementById('rec-fps');
 const recBitrateSelect = document.getElementById('rec-bitrate');
+const toolbarOpacitySlider = document.getElementById('toolbar-opacity');
+const toolbarOpacityVal = document.getElementById('toolbar-opacity-val');
 
 btnRecSettings.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -1485,6 +1575,12 @@ recFpsSelect.addEventListener('change', () => {
 });
 recBitrateSelect.addEventListener('change', () => {
   recSettings.bitrate = parseInt(recBitrateSelect.value);
+});
+
+toolbarOpacitySlider.addEventListener('input', () => {
+  const value = parseInt(toolbarOpacitySlider.value);
+  document.documentElement.style.setProperty('--toolbar-bg', `rgba(30,30,30,${value / 100})`);
+  toolbarOpacityVal.textContent = value + '%';
 });
 
 async function startRecording() {

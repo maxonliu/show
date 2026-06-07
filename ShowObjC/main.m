@@ -1,6 +1,20 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
 
+@interface DraggableWebView : WKWebView
+@end
+
+@implementation DraggableWebView
+- (void)mouseDown:(NSEvent *)event {
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    if (self.bounds.size.height - p.y <= 44) {
+        [self.window performWindowDragWithEvent:event];
+        return;
+    }
+    [super mouseDown:event];
+}
+@end
+
 @interface AppDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler>
 @property (strong) NSWindow *window;
 @property (strong) WKWebView *webView;
@@ -36,6 +50,7 @@
     WKUserContentController *ucc = [[WKUserContentController alloc] init];
     [ucc addScriptMessageHandler:(id)self name:@"saveFile"];
     [ucc addScriptMessageHandler:(id)self name:@"pasteFromClipboard"];
+    [ucc addScriptMessageHandler:(id)self name:@"startWindowDrag"];
 
     // Inject native flag so JS knows we're in the native app
     WKUserScript *nativeScript = [[WKUserScript alloc]
@@ -46,7 +61,7 @@
 
     config.userContentController = ucc;
 
-    self.webView = [[WKWebView alloc]
+    self.webView = [[DraggableWebView alloc]
         initWithFrame:self.window.contentView.bounds
         configuration:config];
     self.webView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -136,6 +151,11 @@
             } @catch (NSException *exception) {
                 NSLog(@"⚠️ MP4 converter unavailable, kept WebM: %@", path);
             }
+        }
+    } else if ([message.name isEqualToString:@"startWindowDrag"]) {
+        NSEvent *event = [NSApp currentEvent];
+        if (event) {
+            [self.window performWindowDragWithEvent:event];
         }
     } else if ([message.name isEqualToString:@"pasteFromClipboard"]) {
         NSPasteboard *pb = [NSPasteboard generalPasteboard];
