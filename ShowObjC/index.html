@@ -1,0 +1,2106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Show — Recording Canvas</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-color: #ffffff;
+    --bg-type: solid;
+    --bg-gradient: none;
+    --toolbar-bg: rgba(30,30,30,0.58);
+    --accent: #5b9aff;
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #000;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ─── Main Canvas ─── */
+  #canvas-wrap {
+    position: relative;
+    width: 100vw; height: 100vh;
+    background: var(--bg-color);
+    overflow: hidden;
+  }
+  #canvas-wrap.gradient {
+    background: var(--bg-gradient);
+  }
+
+  #canvas-area {
+    position: absolute;
+    inset: 0;
+  }
+
+  /* ─── Toolbar ─── */
+  #toolbar {
+    position: absolute;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--toolbar-bg);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.14);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.32);
+    opacity: 0;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: none;
+    z-index: 5000;
+    white-space: nowrap;
+  }
+  #toolbar.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .tb-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .tb-group + .tb-group {
+    margin-left: 6px;
+    padding-left: 8px;
+    border-left: 1px solid rgba(255,255,255,0.1);
+  }
+
+  .tb-btn {
+    width: 32px; height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: #aaa;
+    font-size: 15px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s, color 0.15s;
+  }
+  .tb-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+  .tb-btn.recording { color: #ff4444; }
+  .tb-btn.recording:hover { background: rgba(255,68,68,0.2); }
+  .tb-btn.recording.stop-visible {
+    width: 96px;
+    color: #fff;
+    background: #ff3b30;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 0 12px;
+    pointer-events: auto;
+  }
+  .tb-btn.recording.stop-visible:hover {
+    background: #ff5148;
+  }
+  .tb-btn.active { color: var(--accent); background: rgba(91,154,255,0.15); }
+  .tb-btn.camera-on { color: #4cd964; }
+  .tb-btn.camera-on:hover { background: rgba(76,217,100,0.15); }
+
+  .tb-color {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.15);
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.15s;
+    flex-shrink: 0;
+  }
+  .tb-color:hover { border-color: rgba(255,255,255,0.4); transform: scale(1.15); }
+  .tb-color.active { border-color: #fff; }
+
+  .tb-sep {
+    width: 1px; height: 20px;
+    background: rgba(255,255,255,0.1);
+  }
+
+  /* ─── Canvas Items ─── */
+  .canvas-item {
+    position: absolute;
+    cursor: grab;
+    min-width: 20px; min-height: 20px;
+    border-radius: 4px;
+  }
+  .canvas-item:active { cursor: grabbing; }
+  .canvas-item.selected {
+    outline: 2px dashed rgba(91,154,255,0.7);
+    outline-offset: 3px;
+  }
+  .canvas-item img {
+    display: block;
+    max-width: 400px;
+    max-height: 400px;
+    border-radius: 4px;
+    pointer-events: none;
+  }
+  .canvas-item .text-content {
+    color: #fff;
+    font-size: 32px;
+    line-height: 1.4;
+    padding: 8px 12px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+    pointer-events: none;
+    word-break: break-word;
+    max-width: 500px;
+    min-width: 30px;
+    min-height: 30px;
+  }
+  .canvas-item .text-content:empty::before {
+    content: '✏️ 双击编辑';
+    color: rgba(255,255,255,0.3);
+    font-size: 14px;
+  }
+  .canvas-item .delete-btn {
+    position: absolute;
+    top: -10px; right: -10px;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0,0,0,0.7);
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+    display: none;
+    align-items: center; justify-content: center;
+    transition: background 0.15s;
+    z-index: 10;
+  }
+  .canvas-item .delete-btn:hover { background: #ff4444; }
+  .canvas-item.selected .delete-btn { display: flex; }
+
+  /* ─── Resize handles ─── */
+  .resize-handle {
+    position: absolute;
+    width: 10px; height: 10px;
+    background: #5b9aff;
+    border: 1px solid #fff;
+    border-radius: 50%;
+    z-index: 11;
+    display: none;
+    pointer-events: auto;
+  }
+  .canvas-item.selected .resize-handle { display: block; }
+  .resize-handle.nw { top: -5px; left: -5px; cursor: nw-resize; }
+  .resize-handle.n  { top: -5px; left: 50%; margin-left: -5px; cursor: n-resize; }
+  .resize-handle.ne { top: -5px; right: -5px; cursor: ne-resize; }
+  .resize-handle.e  { top: 50%; right: -5px; margin-top: -5px; cursor: e-resize; }
+  .resize-handle.se { bottom: -5px; right: -5px; cursor: se-resize; }
+  .resize-handle.s  { bottom: -5px; left: 50%; margin-left: -5px; cursor: s-resize; }
+  .resize-handle.sw { bottom: -5px; left: -5px; cursor: sw-resize; }
+  .resize-handle.w  { top: 50%; left: -5px; margin-top: -5px; cursor: w-resize; }
+
+  /* ─── Camera PiP ─── */
+  #camera-pip {
+    position: absolute;
+    z-index: 1000;
+    cursor: grab;
+    display: none;
+    border-radius: var(--cam-roundness, 64px);
+    overflow: hidden;
+    background: transparent;
+    /* Depth: close shadow + wide ambient glow */
+    box-shadow:
+      0 2px 8px rgba(0,0,0,0.20),
+      0 10px 36px rgba(0,0,0,0.16);
+    transition: border-radius 0.2s ease, box-shadow 0.25s ease, transform 0.2s ease;
+    min-width: 60px;
+    min-height: 45px;
+  }
+  #camera-pip:hover {
+    box-shadow:
+      0 2px 8px rgba(0,0,0,0.20),
+      0 10px 36px rgba(0,0,0,0.16);
+    transform: scale(1.02);
+  }
+  #camera-pip:active { cursor: grabbing; }
+  #camera-pip video {
+    width: 100%; height: 100%;
+    display: block;
+    object-fit: cover;
+    pointer-events: none;
+    scale: var(--cam-zoom, 1.06);
+  }
+
+  /*
+    Camera PiP layering:
+    ::before – thin glass border
+    ::after  – feather/vignette + subtle highlight
+  */
+
+  /* Glass edge border */
+  #camera-pip::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 3;
+    border: none;
+    box-shadow: none;
+  }
+
+  /* Feather / vignette + subtle top highlight */
+  #camera-pip::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 2;
+    background: none;
+  }
+  #camera-pip.selected {
+    box-shadow:
+      0 2px 8px rgba(0,0,0,0.20),
+      0 10px 36px rgba(0,0,0,0.16);
+  }
+
+  /* Resize handle on camera PiP */
+  #cam-resize-handle {
+    position: absolute;
+    bottom: -5px; right: -5px;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.85);
+    border: none;
+    cursor: nwse-resize;
+    z-index: 5;
+    display: none;
+    transition: transform 0.15s, background 0.15s;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  }
+  #cam-resize-handle:hover {
+    transform: scale(1.25);
+    background: #fff;
+  }
+  #camera-pip.selected #cam-resize-handle { display: block; }
+
+  /* ─── Camera Settings Panel ─── */
+  #cam-settings {
+    position: absolute;
+    bottom: 80px; left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 14px;
+    background: rgba(30,30,30,0.92);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    z-index: 150;
+    min-width: 220px;
+  }
+  #cam-settings.open { display: flex; }
+
+  /* ─── Recording Settings Panel ─── */
+  #rec-settings {
+    position: absolute;
+    bottom: 80px; left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 14px;
+    background: rgba(30,30,30,0.92);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    z-index: 150;
+    min-width: 200px;
+  }
+  #rec-settings.open { display: flex; }
+
+  .cs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #ccc;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    margin-bottom: 2px;
+  }
+  .cs-header button {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 2px;
+  }
+  .cs-header button:hover { color: #ff6b6b; }
+
+  .cs-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cs-row label {
+    color: #999;
+    font-size: 12px;
+    min-width: 36px;
+    flex-shrink: 0;
+  }
+  .cs-row input[type="range"] {
+    flex: 1;
+    height: 3px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: rgba(255,255,255,0.15);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  .cs-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+  }
+  .cs-row .cs-val {
+    color: #aaa;
+    font-size: 11px;
+    min-width: 30px;
+    text-align: right;
+  }
+
+  .cs-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    color: #999;
+    font-size: 12px;
+  }
+  .cs-toggle input { display: none; }
+  .cs-toggle .toggle-track {
+    width: 28px; height: 16px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.15);
+    position: relative;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .cs-toggle .toggle-track::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: #888;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .cs-toggle input:checked + .toggle-track {
+    background: rgba(76,217,100,0.3);
+  }
+  .cs-toggle input:checked + .toggle-track::after {
+    transform: translateX(12px);
+    background: #4cd964;
+  }
+
+  .cs-positions {
+    display: flex;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .cs-pos-btn {
+    width: 24px; height: 24px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: #777;
+    font-size: 10px;
+    transition: all 0.15s;
+    padding: 0;
+  }
+  .cs-pos-btn:hover { border-color: rgba(255,255,255,0.3); color: #ccc; }
+  .cs-pos-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(91,154,255,0.12); }
+
+  /* ─── Context Menu ─── */
+  #ctx-menu {
+    position: fixed;
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+    background: rgba(40,40,40,0.95);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+    z-index: 200;
+    min-width: 120px;
+  }
+  #ctx-menu .ctx-item {
+    padding: 6px 12px;
+    border-radius: 6px;
+    color: #ccc;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.1s;
+    border: none;
+    background: transparent;
+    text-align: left;
+    font-family: inherit;
+  }
+  #ctx-menu .ctx-item:hover { background: rgba(255,255,255,0.1); color: #fff; }
+  #ctx-menu .ctx-item.danger:hover { background: rgba(255,68,68,0.2); color: #ff6b6b; }
+
+  /* ─── Hidden text editor ─── */
+  #text-editor {
+    position: absolute;
+    z-index: -1;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* ─── Preset buttons ─── */
+  .preset-btn { font-size: 13px; }
+  .preset-btn.active { color: var(--accent); background: rgba(91,154,255,0.15); }
+
+  /* ─── Recording Overlay (countdown) ─── */
+  #recording-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    background: rgba(0,0,0,0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  #recording-overlay.show { display: flex; }
+  #countdown-num {
+    font-size: 120px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 0 60px rgba(255,255,255,0.3);
+  }
+  #countdown-num.pulse { animation: countPulse 0.5s ease-out; }
+  @keyframes countPulse {
+    0% { transform: scale(1.8); opacity: 0.3; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* ─── Recording Timer ─── */
+  #recording-timer {
+    position: fixed;
+    top: 20px; right: 20px;
+    z-index: 200;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #fff;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    font-family: 'SF Mono', Menlo, Monaco, monospace;
+  }
+  #recording-timer.show { display: flex; }
+  #rec-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #ff4444;
+    animation: recBlink 1s ease-in-out infinite;
+  }
+  @keyframes recBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ─── Toast ─── */
+  #toast {
+    position: fixed;
+    top: 40px; left: 50%;
+    transform: translateX(-50%) translateY(-10px);
+    padding: 8px 20px;
+    background: rgba(0,0,0,0.8);
+    backdrop-filter: blur(8px);
+    border-radius: 10px;
+    color: #ddd;
+    font-size: 13px;
+    opacity: 0;
+    transition: opacity 0.25s, transform 0.25s;
+    pointer-events: none;
+    z-index: 5300;
+  }
+  #toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  body.recording-clean-ui #toolbar,
+  body.recording-clean-ui #recording-timer,
+  body.recording-clean-ui #toast,
+  body.recording-clean-ui #debug-log {
+    display: none !important;
+  }
+
+  /* ─── Scrollbar hide ─── */
+  ::-webkit-scrollbar { display: none; }
+</style>
+</head>
+<body>
+
+<!-- Main Canvas -->
+<div id="canvas-wrap">
+  <div id="canvas-area">
+    <!-- Camera PiP (inside canvas so it's captured in recording) -->
+    <div id="camera-pip">
+      <video id="camera-video" autoplay playsinline muted></video>
+      <div id="cam-resize-handle"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Toolbar -->
+<div id="toolbar">
+  <div class="tb-group">
+    <button class="tb-btn" title="添加文字" id="btn-text">T</button>
+    <button class="tb-btn" title="清空画布" id="btn-clear">🗑</button>
+    <button class="tb-btn" title="全屏" id="btn-fullscreen">⛶</button>
+  </div>
+  <div class="tb-group" id="color-group">
+    <button class="tb-color" data-bg="#1a1a1a" style="background:#1a1a1a;border-color:#555"></button>
+    <button class="tb-color" data-bg="#000000" style="background:#000;border-color:#555"></button>
+    <button class="tb-color" data-bg="#2a2a2a" style="background:#2a2a2a;border-color:#555"></button>
+    <button class="tb-color active" data-bg="#ffffff" style="background:#fff;border-color:#555"></button>
+    <button class="tb-color" data-bg="gradient:linear-gradient(135deg,#0f0c29,#302b63,#24243e)" style="background:linear-gradient(135deg,#0f0c29,#302b63,#24243e)"></button>
+    <button class="tb-color" data-bg="gradient:linear-gradient(135deg,#000000,#434343)" style="background:linear-gradient(135deg,#000,#434343)"></button>
+    <input type="color" id="color-picker" value="#ffffff" style="width:22px;height:22px;border:none;border-radius:50%;cursor:pointer;padding:0;flex-shrink:0;background:none">
+  </div>
+  <div class="tb-group" id="preset-group">
+    <button class="tb-btn preset-btn" data-preset="9:16" title="抖音 9:16">🎵</button>
+    <button class="tb-btn preset-btn" data-preset="3:4" title="小红书 3:4">📕</button>
+    <button class="tb-btn preset-btn" data-preset="6:7" title="视频号 6:7">📺</button>
+    <button class="tb-btn preset-btn" data-preset="16:9" title="横屏 16:9">🖥</button>
+    <button class="tb-btn preset-btn active" data-preset="free" title="自适应">↔</button>
+  </div>
+  <div class="tb-group">
+    <button class="tb-btn" title="摄像头 (小镜头)" id="btn-camera">📷</button>
+    <button class="tb-btn" title="录制" id="btn-record">⏺</button>
+    <button class="tb-btn" title="录制设置" id="btn-rec-settings">⚙</button>
+  </div>
+</div>
+
+<!-- Recording Countdown Overlay -->
+<div id="recording-overlay">
+  <div id="countdown-num"></div>
+</div>
+
+<!-- Recording Timer -->
+<div id="recording-timer">
+  <span id="rec-dot"></span>
+  <span id="rec-time">00:00</span>
+</div>
+
+<!-- Camera Settings Panel -->
+<div id="cam-settings">
+  <div class="cs-header">
+    <span>小镜头 设置</span>
+    <button id="cam-close" title="关闭摄像头">✕</button>
+  </div>
+  <div class="cs-row">
+    <label>尺寸</label>
+    <input type="range" id="cam-size" min="80" max="400" value="230">
+    <span class="cs-val" id="cam-size-val">230</span>
+  </div>
+  <div class="cs-row">
+    <label>圆角</label>
+    <input type="range" id="cam-roundness" min="0" max="50" value="28">
+    <span class="cs-val" id="cam-round-val">28%</span>
+  </div>
+  <div class="cs-row">
+    <label class="cs-toggle">
+      <input type="checkbox" id="cam-mirror" checked>
+      <span class="toggle-track"></span>
+      镜像
+    </label>
+  </div>
+  <div class="cs-row" style="flex-direction:column;align-items:stretch">
+    <label style="color:#999;font-size:12px;margin-bottom:2px">位置</label>
+    <div class="cs-positions">
+      <button class="cs-pos-btn" data-pos="tl" title="左上">↖</button>
+      <button class="cs-pos-btn" data-pos="tr" title="右上">↗</button>
+      <button class="cs-pos-btn active" data-pos="br" title="右下">↘</button>
+      <button class="cs-pos-btn" data-pos="bl" title="左下">↙</button>
+    </div>
+  </div>
+</div>
+
+<!-- Recording Settings Panel -->
+<div id="rec-settings">
+  <div class="cs-header">
+    <span>录制 设置</span>
+    <button id="rec-settings-close">✕</button>
+  </div>
+  <div class="cs-row">
+    <label>帧率</label>
+    <select id="rec-fps" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ccc;font-size:12px;padding:4px 6px;">
+      <option value="24">24 fps</option>
+      <option value="30" selected>30 fps</option>
+      <option value="60">60 fps</option>
+    </select>
+  </div>
+  <div class="cs-row">
+    <label>码率</label>
+    <select id="rec-bitrate" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:#ccc;font-size:12px;padding:4px 6px;">
+      <option value="4">4 Mbps</option>
+      <option value="8">8 Mbps</option>
+      <option value="12">12 Mbps</option>
+      <option value="20">20 Mbps</option>
+      <option value="30" selected>30 Mbps</option>
+    </select>
+  </div>
+</div>
+
+<!-- Context Menu -->
+<div id="ctx-menu">
+  <button class="ctx-item" data-action="duplicate">复制</button>
+  <button class="ctx-item danger" data-action="delete">删除</button>
+</div>
+
+<!-- Hidden text input for editing -->
+<textarea id="text-editor"></textarea>
+
+<!-- Toast -->
+<div id="toast"></div>
+<div id="debug-log"></div>
+
+<script>
+// ─── State ───
+let selectedItem = null;
+let recording = false;
+let mediaRecorder = null;
+let recordedChunks = [];
+let stream = null;
+let recordingAudioStream = null;
+let pendingRecording = false;
+let dragState = null;  // { el, offsetX, offsetY }
+let resizeState = null; // { el, handle, startX, startY, startW, startH, startL, startT }
+let nextZIndex = 10;
+
+// Detect running inside native macOS app (injected by WKWebView)
+const isNative = window.__isNativeApp === true;
+
+// Camera state
+let cameraStream = null;
+let cameraActive = false;
+let cameraDragState = null;
+let cameraResizeState = null;
+let camSettings = {
+  size: 230,
+  roundness: 28, // percent (0 = square, 50 = circle)
+  mirror: true,
+  position: 'br' // tl, tr, br, bl
+};
+
+// ─── Preset sizes ───
+const presets = {
+  '9:16': { w: 9, h: 16, name: '抖音' },
+  '3:4':  { w: 3, h: 4,  name: '小红书' },
+  '6:7':  { w: 6, h: 7,  name: '视频号' },
+  '16:9': { w: 16, h: 9, name: '横屏' },
+  'free': { w: 0, h: 0, name: '自适应' }
+};
+let currentPreset = 'free';
+
+function applyPreset(key) {
+  currentPreset = key;
+  document.querySelectorAll('.preset-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.preset === key);
+  });
+  if (key === 'free') {
+    canvasWrap.style.position = '';
+    canvasWrap.style.width = '';
+    canvasWrap.style.height = '';
+    canvasWrap.style.maxWidth = '';
+    canvasWrap.style.maxHeight = '';
+    canvasWrap.style.margin = '';
+    canvasWrap.style.top = '';
+    canvasWrap.style.left = '';
+    // Restore window to default size
+    if (isNative) {
+      window.webkit.messageHandlers.setAspectRatio.postMessage({ width: 0, height: 0 });
+    }
+    return;
+  }
+  const { w, h } = presets[key];
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let cw, ch;
+  if (vw / vh > w / h) {
+    ch = vh; cw = vh * w / h;
+  } else {
+    cw = vw; ch = vw * h / w;
+  }
+  canvasWrap.style.position = 'relative';
+  canvasWrap.style.width = cw + 'px';
+  canvasWrap.style.height = ch + 'px';
+  canvasWrap.style.maxWidth = cw + 'px';
+  canvasWrap.style.maxHeight = ch + 'px';
+  canvasWrap.style.margin = '0 auto';
+
+  // Resize native window to match preset aspect ratio
+  if (isNative) {
+    window.webkit.messageHandlers.setAspectRatio.postMessage({ width: w, height: h });
+  }
+}
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+});
+
+window.addEventListener('resize', () => {
+  if (currentPreset !== 'free') applyPreset(currentPreset);
+});
+
+// ─── DOM refs ───
+const canvas = document.getElementById('canvas-area');
+const canvasWrap = document.getElementById('canvas-wrap');
+const toolbar = document.getElementById('toolbar');
+const toast = document.getElementById('toast');
+const debugLog = document.getElementById('debug-log');
+const ctxMenu = document.getElementById('ctx-menu');
+const textEditor = document.getElementById('text-editor');
+
+const camPip = document.getElementById('camera-pip');
+const camVideo = document.getElementById('camera-video');
+const camResizeHandle = document.getElementById('cam-resize-handle');
+const camSettingsPanel = document.getElementById('cam-settings');
+const camSizeSlider = document.getElementById('cam-size');
+const camRoundSlider = document.getElementById('cam-roundness');
+const camMirrorCheck = document.getElementById('cam-mirror');
+const camPosBtns = document.querySelectorAll('.cs-pos-btn');
+const btnCamera = document.getElementById('btn-camera');
+
+// Recording overlay / timer
+const recOverlay = document.getElementById('recording-overlay');
+const countNum = document.getElementById('countdown-num');
+const recTimer = document.getElementById('recording-timer');
+const recTime = document.getElementById('rec-time');
+let recTimerInterval = null;
+
+// ─── Toast ───
+let toastTimer = null;
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
+function logDebug(msg) {
+  const line = new Date().toLocaleTimeString() + ' ' + msg;
+  console.log(line);
+  debugLog.style.cssText = 'position:fixed;left:8px;top:8px;max-width:520px;max-height:220px;overflow:auto;background:rgba(0,0,0,.85);color:#0f0;font:12px monospace;padding:8px;z-index:10000;white-space:pre-wrap;pointer-events:none';
+  debugLog.textContent = (line + '\n' + debugLog.textContent).slice(0, 3000);
+}
+
+// ─── Toolbar ───
+function showToolbar() {
+  toolbar.classList.add('visible');
+}
+function hideToolbar() {
+  toolbar.classList.remove('visible');
+}
+function enterRecordingUI() {
+  logDebug('enterRecordingUI');
+  toolbar.querySelectorAll('.tb-group').forEach(group => {
+    group.style.display = group.contains(recordBtn) ? 'flex' : 'none';
+  });
+  toolbar.querySelectorAll('.tb-btn').forEach(btn => {
+    if (btn !== recordBtn) btn.style.display = 'none';
+  });
+  toolbar.classList.add('visible');
+  logDebug('recordBtn=' + recordBtn.outerHTML);
+}
+function exitRecordingUI() {
+  logDebug('exitRecordingUI');
+  toolbar.querySelectorAll('.tb-group').forEach(group => {
+    group.style.display = '';
+  });
+  toolbar.querySelectorAll('.tb-btn').forEach(btn => {
+    btn.style.display = '';
+  });
+  toolbar.classList.add('visible');
+}
+
+// Toolbar always visible by default — hidden only during recording
+showToolbar();
+
+// ─── Background ───
+document.querySelectorAll('.tb-color').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const bg = btn.dataset.bg;
+    if (bg.startsWith('gradient:')) {
+      const grad = bg.slice(9);
+      canvasWrap.style.background = grad;
+      canvasWrap.classList.add('gradient');
+    } else {
+      canvasWrap.style.background = bg;
+      canvasWrap.classList.remove('gradient');
+    }
+    document.querySelectorAll('.tb-color').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+document.getElementById('color-picker').addEventListener('input', (e) => {
+  const c = e.target.value;
+  canvasWrap.style.background = c;
+  canvasWrap.classList.remove('gradient');
+  document.querySelectorAll('.tb-color').forEach(b => b.classList.remove('active'));
+});
+
+// ─── Add Items ───
+function addImage(url, x, y) {
+  const div = document.createElement('div');
+  div.className = 'canvas-item';
+  div.style.zIndex = nextZIndex++;
+  const img = document.createElement('img');
+  img.src = url;
+  img.draggable = false;
+  div.appendChild(img);
+  addDeleteBtn(div);
+  addResizeHandles(div);
+  positionItem(div, x, y);
+  canvas.appendChild(div);
+  makeDraggable(div);
+  selectItem(div);
+  return div;
+}
+
+function addText(text, x, y) {
+  const div = document.createElement('div');
+  div.className = 'canvas-item';
+  div.style.zIndex = nextZIndex++;
+  const tc = document.createElement('div');
+  tc.className = 'text-content';
+  tc.textContent = text;
+  tc.contentEditable = false;
+  div.appendChild(tc);
+  addDeleteBtn(div);
+  addResizeHandles(div);
+  positionItem(div, x, y);
+  canvas.appendChild(div);
+  makeDraggable(div);
+  selectItem(div);
+  // Double-click to edit text
+  tc.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    const original = tc.textContent;
+    tc.contentEditable = true;
+    tc.focus();
+    const range = document.createRange();
+    range.selectNodeContents(tc);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    function finish() {
+      tc.contentEditable = false;
+      if (tc.textContent.trim() === '') tc.textContent = original;
+    }
+    tc.addEventListener('blur', finish, { once: true });
+    tc.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        tc.blur();
+      }
+      if (e.key === 'Escape') {
+        tc.textContent = original;
+        tc.blur();
+      }
+    }, { once: false });
+  });
+  return div;
+}
+
+function addDeleteBtn(el) {
+  const btn = document.createElement('button');
+  btn.className = 'delete-btn';
+  btn.textContent = '×';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    deleteItem(el);
+  });
+  el.appendChild(btn);
+}
+
+function addResizeHandles(el) {
+  const positions = ['nw','n','ne','e','se','s','sw','w'];
+  positions.forEach(p => {
+    const h = document.createElement('div');
+    h.className = 'resize-handle ' + p;
+    h.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = el.getBoundingClientRect();
+      resizeState = {
+        el, handle: p,
+        startX: e.clientX, startY: e.clientY,
+        startW: rect.width, startH: rect.height,
+        startL: rect.left, startT: rect.top
+      };
+    });
+    el.appendChild(h);
+  });
+}
+
+function deleteItem(el) {
+  if (el === selectedItem) selectedItem = null;
+  el.remove();
+  showToast('已删除');
+}
+
+function positionItem(el, x, y) {
+  if (x == null) {
+    const rect = el.getBoundingClientRect();
+    x = (canvas.clientWidth - rect.width) / 2;
+    y = (canvas.clientHeight - rect.height) / 2;
+    if (x < 20) x = 20;
+    if (y < 20) y = 20;
+  }
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+}
+
+// ─── Selection ───
+function selectItem(el) {
+  if (selectedItem && selectedItem !== el) selectedItem.classList.remove('selected');
+  selectedItem = el;
+  if (el) el.classList.add('selected');
+}
+
+document.addEventListener('click', (e) => {
+  const item = e.target.closest('.canvas-item');
+  const cam = e.target.closest('#camera-pip');
+  const ignore = e.target.closest('#cam-settings') || e.target.closest('#rec-settings') || e.target.closest('#ctx-menu') || e.target.closest('.delete-btn');
+
+  if (item) {
+    selectItem(item);
+    camPip.classList.remove('selected');
+  } else if (cam && cameraActive) {
+    // Select camera PiP instead of canvas items
+    if (selectedItem) selectedItem.classList.remove('selected');
+    selectedItem = null;
+    camPip.classList.add('selected');
+    camSettingsPanel.classList.add('open');
+  } else if (!ignore) {
+    if (selectedItem) selectedItem.classList.remove('selected');
+    selectedItem = null;
+    camPip.classList.remove('selected');
+    camSettingsPanel.classList.remove('open');
+    recSettingsPanel.classList.remove('open');
+    btnRecSettings.classList.remove('active');
+  }
+});
+
+// ─── Item Dragging ───
+function makeDraggable(el) {
+  el.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.delete-btn') || e.target.closest('.text-content[contenteditable]') || e.target.closest('.resize-handle')) return;
+    e.preventDefault();
+    selectItem(el);
+    const rect = el.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    dragState = {
+      el,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      canvasLeft: canvasRect.left,
+      canvasTop: canvasRect.top
+    };
+    el.style.zIndex = nextZIndex++;
+  });
+}
+
+document.addEventListener('mousemove', (e) => {
+  if (dragState) {
+    const { el, offsetX, offsetY, canvasLeft, canvasTop } = dragState;
+    const x = e.clientX - canvasLeft - offsetX;
+    const y = e.clientY - canvasTop - offsetY;
+    el.style.left = Math.max(0, x) + 'px';
+    el.style.top = Math.max(0, y) + 'px';
+  }
+  if (cameraDragState) {
+    const { canvasLeft, canvasTop } = cameraDragState;
+    const x = e.clientX - canvasLeft - cameraDragState.offsetX;
+    const y = e.clientY - canvasTop - cameraDragState.offsetY;
+    camPip.style.left = Math.max(0, x) + 'px';
+    camPip.style.top = Math.max(0, y) + 'px';
+    // Deselect position preset when custom-dragged
+    camPosBtns.forEach(b => b.classList.remove('active'));
+    camSettings.position = 'custom';
+  }
+  if (cameraResizeState) {
+    const dx = e.clientX - cameraResizeState.startX;
+    const dy = e.clientY - cameraResizeState.startY;
+    const dSize = Math.max(dx, dy);
+    const newSize = Math.min(400, Math.max(80, cameraResizeState.startSize + dSize));
+    camSettings.size = newSize;
+    camSizeSlider.value = newSize;
+    document.getElementById('cam-size-val').textContent = newSize;
+    applyCamSettings();
+  }
+  if (resizeState) {
+    const { el, handle, startX, startY, startW, startH } = resizeState;
+    const canvasRect = canvas.getBoundingClientRect();
+    // el's position relative to canvas
+    let elLeft = parseFloat(el.style.left) || 0;
+    let elTop = parseFloat(el.style.top) || 0;
+    let dx = e.clientX - startX;
+    let dy = e.clientY - startY;
+    let newW = startW, newH = startH, newL = elLeft, newT = elTop;
+    const minSize = 30;
+    // Horizontal
+    if (handle.includes('e')) {
+      newW = Math.max(minSize, startW + dx);
+    }
+    if (handle.includes('w')) {
+      newW = Math.max(minSize, startW - dx);
+      newL = elLeft + (startW - newW);
+    }
+    // Vertical
+    if (handle.includes('s')) {
+      newH = Math.max(minSize, startH + dy);
+    }
+    if (handle.includes('n')) {
+      newH = Math.max(minSize, startH - dy);
+      newT = elTop + (startH - newH);
+    }
+    el.style.left = newL + 'px';
+    el.style.top = newT + 'px';
+    el.style.width = newW + 'px';
+    el.style.height = newH + 'px';
+    // Scale image or text-content to fit
+    const img = el.querySelector('img');
+    if (img) {
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.maxWidth = 'none';
+      img.style.maxHeight = 'none';
+      img.style.objectFit = 'contain';
+    }
+    const tc = el.querySelector('.text-content');
+    if (tc) {
+      tc.style.width = '100%';
+      tc.style.height = '100%';
+      tc.style.maxWidth = 'none';
+    }
+  }
+});
+
+document.addEventListener('mouseup', () => {
+  if (dragState) {
+    dragState = null;
+  }
+  if (cameraDragState) {
+    cameraDragState = null;
+  }
+  if (cameraResizeState) {
+    cameraResizeState = null;
+  }
+  if (resizeState) {
+    resizeState = null;
+  }
+});
+
+// ─── Paste (Cmd+V) ───
+async function handleClipboardItems(items, x, y) {
+  let handled = false;
+  for (const item of items) {
+    const type = item.type || (item.types && item.types[0]) || '';
+    if (type.startsWith('image/')) {
+      const file = item.getAsFile ? item.getAsFile() : await item.getType(type);
+      if (!file) continue;
+      const url = URL.createObjectURL(file);
+      addImage(url, x, y);
+      handled = true;
+      showToast('图片已粘贴');
+    } else if (type === 'text/plain') {
+      if (item.getAsString) {
+        item.getAsString(text => {
+          if (text.trim()) {
+            addText(text.trim(), x, y);
+            showToast('文字已粘贴');
+          }
+        });
+      } else {
+        const text = await (await item.getType('text/plain')).text();
+        if (text.trim()) {
+          addText(text.trim(), x, y);
+          showToast('文字已粘贴');
+        }
+      }
+      handled = true;
+    }
+  }
+  return handled;
+}
+
+function pasteCenterPoint() {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: rect.width / 2 - 120,
+    y: rect.height / 2 - 80,
+  };
+}
+
+window.__nativePasteImage = function(dataUrl) {
+  const p = pasteCenterPoint();
+  addImage(dataUrl, p.x, p.y);
+  showToast('图片已粘贴');
+};
+
+window.__nativePasteText = function(text) {
+  const p = pasteCenterPoint();
+  addText(text, p.x, p.y);
+  showToast('文字已粘贴');
+};
+
+document.addEventListener('paste', async (e) => {
+  e.preventDefault();
+  if (isNative && window.webkit?.messageHandlers?.pasteFromClipboard) {
+    window.webkit.messageHandlers.pasteFromClipboard.postMessage({});
+    return;
+  }
+  const p = pasteCenterPoint();
+  const handled = await handleClipboardItems(e.clipboardData.items, p.x, p.y);
+  if (!handled) {
+    showToast('剪贴板内容不支持');
+  }
+});
+
+// ─── Drag & Drop files ───
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('dragenter', (e) => e.preventDefault());
+
+canvasWrap.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const files = e.dataTransfer.files;
+  if (files.length === 0) {
+    const text = e.dataTransfer.getData('text');
+    if (text) {
+      addText(text, e.clientX - canvas.getBoundingClientRect().left, e.clientY - canvas.getBoundingClientRect().top);
+      showToast('文字已拖入');
+    }
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  for (const file of files) {
+    if (file.type.startsWith('image/')) {
+      const url = URL.createObjectURL(file);
+      addImage(url, e.clientX - rect.left - 50, e.clientY - rect.top - 50);
+      showToast('图片已拖入');
+    }
+  }
+});
+
+// ─── Keyboard shortcuts ───
+document.addEventListener('keydown', (e) => {
+  if (recording && (e.key === 'Escape' || e.key === ' ')) {
+    e.preventDefault();
+    stopRecording();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
+    if (e.target && e.target.closest && e.target.closest('.text-content[contenteditable]')) return;
+    e.preventDefault();
+    if (isNative && window.webkit?.messageHandlers?.pasteFromClipboard) {
+      window.webkit.messageHandlers.pasteFromClipboard.postMessage({});
+      return;
+    }
+    const p = pasteCenterPoint();
+    navigator.clipboard.read().then(async items => {
+      const handled = await handleClipboardItems(items, p.x, p.y);
+      if (!handled) showToast('剪贴板内容不支持');
+    }).catch(() => {
+      textEditor.focus();
+      document.execCommand('paste');
+    });
+    return;
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedItem) {
+    if (e.target === textEditor) return;
+    deleteItem(selectedItem);
+    e.preventDefault();
+  }
+  if (e.key === 'Escape') {
+    if (selectedItem) {
+      selectedItem.classList.remove('selected');
+      selectedItem = null;
+    }
+    camPip.classList.remove('selected');
+    camSettingsPanel.classList.remove('open');
+    ctxMenu.style.display = 'none';
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 't') {
+    e.preventDefault();
+    const text = prompt('输入文字：');
+    if (text && text.trim()) {
+      addText(text.trim(), 100, 100);
+    }
+  }
+});
+
+// ─── Context Menu ───
+document.addEventListener('contextmenu', (e) => {
+  const item = e.target.closest('.canvas-item');
+  if (item) {
+    e.preventDefault();
+    selectItem(item);
+    ctxMenu.style.display = 'flex';
+    ctxMenu.style.left = e.clientX + 'px';
+    ctxMenu.style.top = e.clientY + 'px';
+  }
+});
+document.addEventListener('click', () => {
+  ctxMenu.style.display = 'none';
+});
+document.querySelectorAll('#ctx-menu .ctx-item').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const action = btn.dataset.action;
+    if (action === 'delete' && selectedItem) {
+      deleteItem(selectedItem);
+    } else if (action === 'duplicate' && selectedItem) {
+      duplicateItem(selectedItem);
+    }
+    ctxMenu.style.display = 'none';
+  });
+});
+
+function duplicateItem(el) {
+  const img = el.querySelector('img');
+  const text = el.querySelector('.text-content');
+  const rect = el.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  const x = rect.left - canvasRect.left + 20;
+  const y = rect.top - canvasRect.top + 20;
+  let newEl;
+  if (img) {
+    newEl = addImage(img.src, x, y);
+  } else if (text) {
+    newEl = addText(text.textContent, x, y);
+  }
+  if (newEl) showToast('已复制');
+}
+
+// ─── CAMERA (小镜头) ───
+
+// Toggle camera
+btnCamera.addEventListener('click', async () => {
+  if (cameraActive) {
+    stopCamera();
+  } else {
+    await startCamera();
+  }
+});
+
+async function startCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        facingMode: 'user'
+      },
+      audio: false
+    });
+  } catch (err) {
+    showToast('摄像头启动失败: ' + err.message);
+    return;
+  }
+
+  camVideo.srcObject = cameraStream;
+  cameraActive = true;
+  btnCamera.classList.add('camera-on');
+  btnCamera.textContent = '📹';
+
+  // Show the camera PiP
+  camPip.style.display = 'block';
+  camPip.classList.add('selected');
+  camSettingsPanel.classList.add('open');
+
+  // Position at default (bottom-right)
+  applyCamPosition('br');
+
+  // Apply settings
+  applyCamSettings();
+  showToolbar();
+  showToast('📷 摄像头已开启');
+}
+
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+  camVideo.srcObject = null;
+  cameraActive = false;
+  btnCamera.classList.remove('camera-on');
+  btnCamera.textContent = '📷';
+  camPip.style.display = 'none';
+  camPip.classList.remove('selected');
+  camSettingsPanel.classList.remove('open');
+  showToast('摄像头已关闭');
+}
+
+// Apply camera settings (size, roundness, mirror)
+function applyCamSettings() {
+  const size = camSettings.size;
+  const roundPct = camSettings.roundness;
+  const mirror = camSettings.mirror;
+
+  camPip.style.width = size + 'px';
+  // Rounded-square camera frame
+  camPip.style.height = size + 'px';
+
+  // Roundness: 0% = square (4px), 50% = circle
+  const br = roundPct <= 1 ? 4 : (roundPct / 50) * (size / 2);
+  camPip.style.setProperty('--cam-roundness', br + 'px');
+  camPip.style.borderRadius = br + 'px';
+
+  // Mirror
+  camVideo.style.transform = mirror ? 'scaleX(-1)' : 'scaleX(1)';
+}
+
+// Position camera PiP at given preset
+function applyCamPosition(pos) {
+  camSettings.position = pos;
+  const margin = 20;
+  const w = parseInt(camPip.style.width) || camSettings.size;
+  const h = parseInt(camPip.style.height) || camSettings.size;
+  const cw = canvas.clientWidth;
+  const ch = canvas.clientHeight;
+
+  let left, top;
+  switch (pos) {
+    case 'tl': left = margin; top = margin; break;
+    case 'tr': left = cw - w - margin; top = margin; break;
+    case 'bl': left = margin; top = ch - h - margin; break;
+    case 'br': left = cw - w - margin; top = ch - h - margin; break;
+    default: return;
+  }
+  camPip.style.left = left + 'px';
+  camPip.style.top = top + 'px';
+
+  camPosBtns.forEach(b => {
+    b.classList.toggle('active', b.dataset.pos === pos);
+  });
+}
+
+// Camera PiP dragging
+camPip.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  if (e.target === camResizeHandle || e.target.closest('#cam-resize-handle')) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  // Select camera PiP
+  if (selectedItem) selectedItem.classList.remove('selected');
+  selectedItem = null;
+  camPip.classList.add('selected');
+  camSettingsPanel.classList.add('open');
+
+  const rect = camPip.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  cameraDragState = {
+    offsetX: e.clientX - rect.left,
+    offsetY: e.clientY - rect.top,
+    canvasLeft: canvasRect.left,
+    canvasTop: canvasRect.top
+  };
+});
+
+// Camera resize handle
+camResizeHandle.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  cameraResizeState = {
+    startX: e.clientX,
+    startY: e.clientY,
+    startSize: camSettings.size
+  };
+});
+
+// Camera settings controls
+camSizeSlider.addEventListener('input', (e) => {
+  camSettings.size = parseInt(e.target.value);
+  document.getElementById('cam-size-val').textContent = camSettings.size;
+  applyCamSettings();
+});
+
+camRoundSlider.addEventListener('input', (e) => {
+  camSettings.roundness = parseInt(e.target.value);
+  document.getElementById('cam-round-val').textContent = camSettings.roundness + '%';
+  applyCamSettings();
+});
+
+camMirrorCheck.addEventListener('change', (e) => {
+  camSettings.mirror = e.target.checked;
+  applyCamSettings();
+});
+
+camPosBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    applyCamPosition(btn.dataset.pos);
+  });
+});
+
+document.getElementById('cam-close').addEventListener('click', () => {
+  stopCamera();
+});
+
+// ─── Recording ───
+let recordingCountdown = false;
+
+async function startRecordingFlow() {
+  if (recordingCountdown) return;
+  recordingCountdown = true;
+
+  recOverlay.classList.add('show');
+
+  for (let i = 3; i >= 1; i--) {
+    countNum.textContent = i;
+    countNum.classList.remove('pulse');
+    void countNum.offsetWidth;
+    countNum.classList.add('pulse');
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
+  recOverlay.classList.remove('show');
+  recordingCountdown = false;
+
+  if (false) {
+    // ─── Native ScreenCaptureKit path (not implemented) ───
+  } else {
+    // ─── Browser: use WebCodecs / MediaRecorder ───
+    await startRecording();
+
+    if (recording) {
+      recTimer.classList.add('show');
+      let seconds = 0;
+      recTime.textContent = '00:00';
+      recTimerInterval = setInterval(() => {
+        if (!recording) {
+          clearInterval(recTimerInterval);
+          recTimerInterval = null;
+          recTimer.classList.remove('show');
+          return;
+        }
+        seconds++;
+        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const s = (seconds % 60).toString().padStart(2, '0');
+        recTime.textContent = m + ':' + s;
+      }, 1000);
+    }
+  }
+}
+
+const recordBtn = document.getElementById('btn-record');
+
+recordBtn.addEventListener('click', async () => {
+  logDebug('record button clicked, recording=' + recording + ', pending=' + pendingRecording);
+  if (recording || pendingRecording) {
+    await stopRecording();
+  } else {
+    await startRecordingFlow();
+  }
+});
+// ─── Recording (MP4 via WebCodecs, WebM fallback) ───
+
+let mp4Cleanup = null;      // cleanup function for MP4 pipeline
+let encVideo = null;        // hidden video element for encoding source
+let encCanvas = null;       // canvas for frame capture
+
+// Recording settings
+const recSettings = {
+  fps: 30,
+  bitrate: 30, // Mbps
+};
+
+// ─── Recording settings panel toggle ───
+const recSettingsPanel = document.getElementById('rec-settings');
+const btnRecSettings = document.getElementById('btn-rec-settings');
+const recFpsSelect = document.getElementById('rec-fps');
+const recBitrateSelect = document.getElementById('rec-bitrate');
+
+btnRecSettings.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const open = recSettingsPanel.classList.toggle('open');
+  btnRecSettings.classList.toggle('active', open);
+  if (open) {
+    camSettingsPanel.classList.remove('open');
+    btnCamera.classList.remove('active');
+  }
+});
+
+document.getElementById('rec-settings-close').addEventListener('click', () => {
+  recSettingsPanel.classList.remove('open');
+  btnRecSettings.classList.remove('active');
+});
+
+// Close panels on outside click (handled in existing click handler, extended below)
+
+recFpsSelect.addEventListener('change', () => {
+  recSettings.fps = parseInt(recFpsSelect.value);
+});
+recBitrateSelect.addEventListener('change', () => {
+  recSettings.bitrate = parseInt(recBitrateSelect.value);
+});
+
+async function startRecording() {
+  await startRecordingWebM();
+}
+
+// ─── MP4 Pipeline (WebCodecs + mp4-muxer) ───
+async function startRecordingMP4() {
+  stream = await navigator.mediaDevices.getDisplayMedia({
+    video: { displaySurface: 'browser', preferCurrentTab: true },
+    audio: true,
+  });
+  if (!stream) { showToast('未选择共享内容'); return; }
+
+  const videoTrack = stream.getVideoTracks()[0];
+  const audioTrack = stream.getAudioTracks()[0];
+  const vSettings = videoTrack.getSettings();
+  const width = vSettings.width || 1920;
+  const height = vSettings.height || 1080;
+
+  // Hidden video to receive the display stream
+  encVideo = document.createElement('video');
+  encVideo.srcObject = stream;
+  encVideo.autoplay = true;
+  encVideo.muted = true;
+  encVideo.playsInline = true;
+  await encVideo.play();
+
+  // Canvas for frame extraction
+  encCanvas = document.createElement('canvas');
+  encCanvas.width = width;
+  encCanvas.height = height;
+  const ctx = encCanvas.getContext('2d');
+
+  // Use pre-loaded mp4-muxer
+  console.log('__mp4Muxer =', window.__mp4Muxer);
+  if (!window.__mp4Muxer) throw new Error('mp4-muxer not loaded');
+  const { Muxer, ArrayBufferTarget } = window.__mp4Muxer;
+
+  const muxerConfig = {
+    target: new ArrayBufferTarget(),
+    video: { codec: 'avc', width, height },
+    fastStart: 'in-memory',
+  };
+
+  if (audioTrack) {
+    const aSettings = audioTrack.getSettings();
+    muxerConfig.audio = {
+      codec: 'aac',
+      numberOfChannels: aSettings.channelCount || 2,
+      sampleRate: aSettings.sampleRate || 48000,
+    };
+  }
+
+  const muxer = new Muxer(muxerConfig);
+
+  // Video encoder
+  const videoEncoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: (e) => { console.error('VideoEncoder error:', e); stopRecording(); },
+  });
+
+  const codec = await pickBestCodec();
+  videoEncoder.configure({
+    codec,
+    width,
+    height,
+    bitrate: recSettings.bitrate * 1_000_000,
+    framerate: recSettings.fps,
+    avc: { format: 'avc' },
+  });
+
+  // Audio encoder (if audio track available)
+  let audioEncoder = null;
+  let audioReader = null;
+  let audioReading = false;
+
+  if (audioTrack) {
+    const aSettings = audioTrack.getSettings();
+    audioEncoder = new AudioEncoder({
+      output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+      error: (e) => console.error('AudioEncoder error:', e),
+    });
+
+    audioEncoder.configure({
+      codec: 'mp4a.40.2',
+      numberOfChannels: aSettings.channelCount || 2,
+      sampleRate: aSettings.sampleRate || 48000,
+      bitrate: 128000,
+    });
+
+    const audioProcessor = new MediaStreamTrackProcessor({ track: audioTrack });
+    audioReader = audioProcessor.readable.getReader();
+    audioReading = true;
+
+    // Feed audio frames to encoder in background
+    (async () => {
+      try {
+        while (audioReading && recording) {
+          const { done, value } = await audioReader.read();
+          if (done) break;
+          audioEncoder.encode(value);
+          value.close();
+        }
+      } catch (_) {}
+    })();
+  }
+
+  // Frame capture loop
+  let frameIdx = 0;
+  const fps = recSettings.fps;
+  const frameInterval = 1000 / fps;
+  let lastFrameTime = 0;
+  let animId = 0;
+
+  function captureFrame(timestamp) {
+    if (!recording) return;
+    animId = requestAnimationFrame(captureFrame);
+
+    const elapsed = timestamp - lastFrameTime;
+    if (elapsed < frameInterval - 5) return;
+    lastFrameTime = timestamp - (elapsed % frameInterval);
+
+    ctx.drawImage(encVideo, 0, 0, width, height);
+    const frame = new VideoFrame(encCanvas, {
+      timestamp: Math.round(timestamp * 1000),
+      duration: Math.round(1_000_000 / fps),
+    });
+    videoEncoder.encode(frame, { keyFrame: frameIdx % 90 === 0 });
+    frame.close();
+    frameIdx++;
+  }
+
+  recording = true;
+  recordBtn.classList.add('recording');
+  recordBtn.textContent = '⏹';
+  hideToolbar();
+  const label = audioTrack ? 'MP4 + 音频' : 'MP4 (无音频)';
+  showToast('⏺ 正在录制 ' + label + '...');
+  animId = requestAnimationFrame(captureFrame);
+
+  // Cleanup
+  mp4Cleanup = async () => {
+    cancelAnimationFrame(animId);
+    audioReading = false;
+    if (audioReader) {
+      try { await audioReader.cancel(); } catch (_) {}
+      audioReader = null;
+    }
+    await videoEncoder.flush();
+    videoEncoder.close();
+    if (audioEncoder) {
+      await audioEncoder.flush();
+      audioEncoder.close();
+      audioEncoder = null;
+    }
+    muxer.finalize();
+    const buf = muxer.target.buffer;
+    const blob = new Blob([buf], { type: 'video/mp4' });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const fname = `show-recording-${ts}.mp4`;
+
+    if (isNative) {
+      // Native save via ObjC bridge
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result.split(',')[1];
+        window.webkit.messageHandlers.saveFile.postMessage({ data: base64, filename: fname });
+      };
+      reader.readAsDataURL(blob);
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    encVideo = null;
+    encCanvas = null;
+    mp4Cleanup = null;
+  };
+}
+
+async function pickBestCodec() {
+  // isConfigSupported is unreliable in WKWebView — just try configuring directly
+  const codecs = [
+    'avc1.640028',  // High Profile Level 4.0
+    'avc1.4D0028',  // Main Profile
+    'avc1.42E01E',  // Baseline Level 3.0
+    'avc1.42001E',  // Baseline
+    'avc1.420016',  // Baseline Level 2.2
+  ];
+  for (const codec of codecs) {
+    try {
+      const support = await VideoEncoder.isConfigSupported({ codec, width: 1280, height: 720 });
+      if (support.supported) return codec;
+    } catch (_) {}
+    // Also try actually creating an encoder as secondary check
+    try {
+      const testEnc = new VideoEncoder({ output: () => {}, error: () => {} });
+      testEnc.configure({ codec, width: 1280, height: 720, bitrate: 1_000_000, framerate: 30 });
+      testEnc.close();
+      return codec;
+    } catch (_) {}
+  }
+  throw new Error('No supported H.264 codec found');
+}
+
+// ─── WebM Fallback (MediaRecorder) ───
+async function startRecordingWebM() {
+  logDebug('startRecordingWebM: recording clean canvas only');
+  const rect = canvasWrap.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const recCanvas = document.createElement('canvas');
+  recCanvas.width = Math.round(rect.width * dpr);
+  recCanvas.height = Math.round(rect.height * dpr);
+  const recCtx = recCanvas.getContext('2d');
+  recCtx.scale(dpr, dpr);
+  let renderLoop = 0;
+
+  function renderFrame() {
+    recCtx.save();
+    recCtx.clearRect(0, 0, rect.width, rect.height);
+    recCtx.fillStyle = getComputedStyle(canvasWrap).backgroundColor || '#fff';
+    recCtx.fillRect(0, 0, rect.width, rect.height);
+
+    const items = [...canvas.querySelectorAll('.canvas-item, #camera-pip')]
+      .filter(el => el.style.display !== 'none')
+      .sort((a, b) => (parseInt(getComputedStyle(a).zIndex) || 0) - (parseInt(getComputedStyle(b).zIndex) || 0));
+
+    for (const el of items) {
+      const r = el.getBoundingClientRect();
+      const x = r.left - rect.left;
+      const y = r.top - rect.top;
+      const img = el.querySelector('img');
+      const text = el.querySelector('.text-content');
+      const video = el.querySelector('video');
+      try {
+        if (video && video.readyState >= 2) {
+          const radius = parseFloat(getComputedStyle(el).borderRadius) || 0;
+          recCtx.save();
+          roundedRect(recCtx, x, y, r.width, r.height, radius);
+          recCtx.clip();
+          const zoom = parseFloat(getComputedStyle(video).scale) || 1;
+          const srcAspect = video.videoWidth / video.videoHeight;
+          const dstAspect = r.width / r.height;
+          let sw = video.videoWidth;
+          let sh = video.videoHeight;
+          if (srcAspect > dstAspect) {
+            sw = video.videoHeight * dstAspect;
+          } else {
+            sh = video.videoWidth / dstAspect;
+          }
+          sw = sw / zoom;
+          sh = sh / zoom;
+          const sx = (video.videoWidth - sw) / 2;
+          const sy = (video.videoHeight - sh) / 2;
+          if (getComputedStyle(video).transform !== 'none') {
+            recCtx.translate(x + r.width, y);
+            recCtx.scale(-1, 1);
+            recCtx.drawImage(video, sx, sy, sw, sh, 0, 0, r.width, r.height);
+          } else {
+            recCtx.drawImage(video, sx, sy, sw, sh, x, y, r.width, r.height);
+          }
+          recCtx.restore();
+        } else if (img && img.complete) {
+          recCtx.drawImage(img, x, y, r.width, r.height);
+        } else if (text) {
+          const style = getComputedStyle(text);
+          recCtx.fillStyle = style.backgroundColor;
+          recCtx.fillRect(x, y, r.width, r.height);
+          recCtx.fillStyle = style.color;
+          recCtx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+          recCtx.textBaseline = 'top';
+          recCtx.fillText(text.textContent, x + 12, y + 8, r.width - 24);
+        }
+      } catch (_) {}
+    }
+    recCtx.restore();
+    if (recording || pendingRecording) renderLoop = requestAnimationFrame(renderFrame);
+  }
+
+  function roundedRect(ctx, x, y, w, h, r) {
+    const radius = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  }
+
+  stream = recCanvas.captureStream(recSettings.fps);
+  try {
+    recordingAudioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
+    recordingAudioStream.getAudioTracks().forEach(track => stream.addTrack(track));
+    logDebug('audio track added');
+  } catch (e) {
+    logDebug('audio unavailable: ' + e.message);
+    showToast('麦克风不可用，仅录制画面');
+  }
+  logDebug('canvas stream: ' + recCanvas.width + 'x' + recCanvas.height);
+
+  recordedChunks = [];
+  mediaRecorder = new MediaRecorder(stream, {
+    mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9' : 'video/webm',
+    videoBitsPerSecond: recSettings.bitrate * 1_000_000,
+    audioBitsPerSecond: 192_000,
+  });
+
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) recordedChunks.push(e.data);
+  };
+
+  mediaRecorder.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    if (recordingAudioStream) {
+      recordingAudioStream.getTracks().forEach(t => t.stop());
+      recordingAudioStream = null;
+    }
+    cancelAnimationFrame(renderLoop);
+    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const fname = `show-recording-${ts}.webm`;
+
+    if (isNative) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result.split(',')[1];
+        window.webkit.messageHandlers.saveFile.postMessage({ data: base64, filename: fname });
+      };
+      reader.readAsDataURL(blob);
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+    recordedChunks = [];
+    stream = null;
+    mediaRecorder = null;
+  };
+
+  mediaRecorder.start(100);
+  logDebug('mediaRecorder started: ' + mediaRecorder.state);
+  pendingRecording = false;
+  recording = true;
+  renderFrame();
+  recordBtn.classList.add('recording');
+  recordBtn.classList.add('stop-visible');
+  recordBtn.textContent = '停止';
+  recordBtn.title = '停止录制';
+  enterRecordingUI();
+  showToast('⏺ 正在录制...');
+}
+
+// ─── Stop Recording ───
+async function stopRecording() {
+  logDebug('stopRecording called');
+  if (pendingRecording && !recording) {
+    pendingRecording = false;
+    recordBtn.classList.remove('recording');
+    recordBtn.classList.remove('stop-visible');
+    recordBtn.textContent = '⏺';
+    recordBtn.title = '录制';
+    exitRecordingUI();
+    showToast('录制已取消');
+    return;
+  }
+  // Show saving state
+  showToast('正在保存文件...');
+
+  // Stop MP4 pipeline
+  if (mp4Cleanup) {
+    try {
+      await mp4Cleanup();
+    } catch (e) {
+      console.error('MP4 save error:', e);
+    }
+    mp4Cleanup = null;
+  }
+  // Stop WebM MediaRecorder
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+
+  recording = false;
+  recordBtn.classList.remove('recording');
+  recordBtn.classList.remove('stop-visible');
+  recordBtn.textContent = '⏺';
+  recordBtn.title = '录制';
+
+  if (recTimerInterval) {
+    clearInterval(recTimerInterval);
+    recTimerInterval = null;
+  }
+  recTimer.classList.remove('show');
+
+  document.body.classList.remove('recording-clean-ui');
+  exitRecordingUI();
+  showToast('✅ 录制已保存');
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (recording && document.hidden) {
+    // User might have stopped sharing
+  }
+});
+
+// ─── Toolbar buttons ───
+document.getElementById('btn-clear').addEventListener('click', () => {
+  if (canvas.children.length === 0) return;
+  if (confirm('确定清空画布?')) {
+    // Don't remove camera PiP
+    const items = canvas.querySelectorAll('.canvas-item');
+    items.forEach(el => el.remove());
+    selectedItem = null;
+    showToast('画布已清空');
+  }
+});
+
+document.getElementById('btn-text').addEventListener('click', () => {
+  const text = prompt('输入文字：');
+  if (text && text.trim()) {
+    addText(text.trim());
+    showToast('文字已添加');
+  }
+});
+
+document.getElementById('btn-fullscreen').addEventListener('click', () => {
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  } else {
+    document.documentElement.requestFullscreen();
+  }
+});
+
+document.addEventListener('fullscreenchange', () => {
+  const btn = document.getElementById('btn-fullscreen');
+  btn.textContent = document.fullscreenElement ? '⛶' : '⛶';
+  btn.classList.toggle('active', !!document.fullscreenElement);
+});
+
+// ─── Init ───
+
+// Focus hidden textarea so paste events fire (WKWebView needs an editable element focused)
+textEditor.focus();
+
+// When clicking on the canvas, re-focus the hidden textarea to keep paste working
+canvas.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('.text-content[contenteditable]')) {
+    textEditor.focus();
+  }
+});
+
+// Show welcome toast
+setTimeout(() => {
+  const hasCam = cameraActive ? ' 📹' : '';
+  showToast('Build __SHOW_BUILD_ID__ · ⌘V 粘贴 · 拖入文件 · T 添加文字' + hasCam);
+}, 500);
+
+
+// ─── Native App Callbacks (called from Swift) ───
+// These are only used when isNative === true.
+
+window.__nativeRecordingStarted = function() {
+  // Fine-grained control: native started capturing
+  recording = true;
+  recordBtn.classList.add('recording');
+  recordBtn.textContent = '⏹';
+  hideToolbar();
+  showToast('⏺ 正在录制...');
+
+  recTimer.classList.add('show');
+  let seconds = 0;
+  recTime.textContent = '00:00';
+  if (recTimerInterval) clearInterval(recTimerInterval);
+  recTimerInterval = setInterval(() => {
+    seconds++;
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    recTime.textContent = m + ':' + s;
+  }, 1000);
+};
+
+window.__nativeRecordingStopped = function() {
+  // Native finished capture; file is being saved
+  recording = false;
+  recordBtn.classList.remove('recording');
+  recordBtn.textContent = '⏺';
+
+  if (recTimerInterval) {
+    clearInterval(recTimerInterval);
+    recTimerInterval = null;
+  }
+  recTimer.classList.remove('show');
+  showToolbar();
+  showToast('正在保存文件...');
+};
+
+window.__nativeRecordingSaved = function() {
+  showToast('✅ 录制已保存');
+};
+
+console.log('Show — Recording Canvas loaded');
+console.log('⌘V 粘贴图片 | 拖入文件 | 📷 小镜头');
+</script>
+</body>
+</html>
