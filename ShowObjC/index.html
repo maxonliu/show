@@ -81,6 +81,24 @@
     border-left: 1px solid rgba(255,255,255,0.1);
   }
 
+  .tb-select {
+    height: 28px;
+    min-width: 112px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 9px;
+    background: rgba(255,255,255,0.08);
+    color: #ddd;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 0 8px;
+    outline: none;
+    cursor: pointer;
+  }
+  .tb-select:hover {
+    background: rgba(255,255,255,0.13);
+    color: #fff;
+  }
+
   .tb-btn {
     width: 32px; height: 32px;
     border: none;
@@ -603,14 +621,17 @@
     <button class="tb-btn" title="清空画布" id="btn-clear">🗑</button>
     <button class="tb-btn" title="全屏" id="btn-fullscreen">⛶</button>
   </div>
-  <div class="tb-group" id="color-group">
-    <button class="tb-color" data-bg="#1a1a1a" style="background:#1a1a1a;border-color:#555"></button>
-    <button class="tb-color" data-bg="#000000" style="background:#000;border-color:#555"></button>
-    <button class="tb-color" data-bg="#2a2a2a" style="background:#2a2a2a;border-color:#555"></button>
-    <button class="tb-color active" data-bg="#ffffff" style="background:#fff;border-color:#555"></button>
-    <button class="tb-color" data-bg="gradient:linear-gradient(135deg,#0f0c29,#302b63,#24243e)" style="background:linear-gradient(135deg,#0f0c29,#302b63,#24243e)"></button>
-    <button class="tb-color" data-bg="gradient:linear-gradient(135deg,#000000,#434343)" style="background:linear-gradient(135deg,#000,#434343)"></button>
-    <input type="color" id="color-picker" value="#ffffff" style="width:22px;height:22px;border:none;border-radius:50%;cursor:pointer;padding:0;flex-shrink:0;background:none">
+  <div class="tb-group" id="background-group">
+    <select id="bg-preset" class="tb-select" title="背景样式">
+      <option value="paper" selected>背景 · 纸白</option>
+      <option value="glass">背景 · 玻璃</option>
+      <option value="silver">背景 · 银雾</option>
+      <option value="midnight">背景 · 深空</option>
+      <option value="aurora">背景 · 极光</option>
+      <option value="warm">背景 · 暖米</option>
+      <option value="custom">背景 · 自定义</option>
+    </select>
+    <input type="color" id="color-picker" value="#ffffff" style="width:22px;height:22px;border:none;border-radius:7px;cursor:pointer;padding:0;flex-shrink:0;background:none">
   </div>
   <div class="tb-group" id="preset-group">
     <button class="tb-btn preset-btn" data-preset="9:16" title="抖音 9:16">抖</button>
@@ -864,26 +885,34 @@ function hideToolbar() {
 showToolbar();
 
 // ─── Background ───
-document.querySelectorAll('.tb-color').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const bg = btn.dataset.bg;
-    if (bg.startsWith('gradient:')) {
-      const grad = bg.slice(9);
-      canvasWrap.style.background = grad;
-      canvasWrap.classList.add('gradient');
-    } else {
-      canvasWrap.style.background = bg;
-      canvasWrap.classList.remove('gradient');
-    }
-    document.querySelectorAll('.tb-color').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-  });
+const bgPresets = {
+  paper: '#ffffff',
+  glass: 'linear-gradient(135deg,#f8fafc 0%,#eef2f7 45%,#ffffff 100%)',
+  silver: 'radial-gradient(circle at 30% 20%,#ffffff 0%,#e9edf3 35%,#cfd6df 100%)',
+  midnight: 'linear-gradient(135deg,#0b0f17 0%,#171c27 52%,#06070a 100%)',
+  aurora: 'linear-gradient(135deg,#0f172a 0%,#312e81 38%,#0e7490 72%,#ecfeff 100%)',
+  warm: 'linear-gradient(135deg,#fff7ed 0%,#fef3c7 45%,#ffffff 100%)',
+};
+
+function applyBackground(value) {
+  if (value === 'custom') {
+    canvasWrap.style.background = document.getElementById('color-picker').value;
+    canvasWrap.classList.remove('gradient');
+    return;
+  }
+  canvasWrap.style.background = bgPresets[value] || '#ffffff';
+  canvasWrap.classList.toggle('gradient', (bgPresets[value] || '').includes('gradient'));
+}
+
+document.getElementById('bg-preset').addEventListener('change', (e) => {
+  applyBackground(e.target.value);
 });
+
 document.getElementById('color-picker').addEventListener('input', (e) => {
   const c = e.target.value;
+  document.getElementById('bg-preset').value = 'custom';
   canvasWrap.style.background = c;
   canvasWrap.classList.remove('gradient');
-  document.querySelectorAll('.tb-color').forEach(b => b.classList.remove('active'));
 });
 
 // ─── Add Items ───
