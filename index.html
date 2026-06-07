@@ -704,6 +704,9 @@ let dragState = null;  // { el, offsetX, offsetY }
 let resizeState = null; // { el, handle, startX, startY, startW, startH, startL, startT }
 let nextZIndex = 10;
 
+// Detect running inside native macOS app (injected by WKWebView)
+const isNative = window.__isNativeApp === true;
+
 // Camera state
 let cameraStream = null;
 let cameraActive = false;
@@ -740,6 +743,10 @@ function applyPreset(key) {
     canvasWrap.style.margin = '';
     canvasWrap.style.top = '';
     canvasWrap.style.left = '';
+    // Restore window to default size
+    if (isNative) {
+      window.webkit.messageHandlers.setAspectRatio.postMessage({ width: 0, height: 0 });
+    }
     return;
   }
   const { w, h } = presets[key];
@@ -757,6 +764,11 @@ function applyPreset(key) {
   canvasWrap.style.maxWidth = cw + 'px';
   canvasWrap.style.maxHeight = ch + 'px';
   canvasWrap.style.margin = '0 auto';
+
+  // Resize native window to match preset aspect ratio
+  if (isNative) {
+    window.webkit.messageHandlers.setAspectRatio.postMessage({ width: w, height: h });
+  }
 }
 
 document.querySelectorAll('.preset-btn').forEach(btn => {
@@ -1396,9 +1408,20 @@ async function startRecordingFlow() {
   recOverlay.classList.remove('show');
   recordingCountdown = false;
 
-  await startRecording();
+  if (isNative) {
+    // ─── Native app: use ScreenCaptureKit ───
+    recording = true;
+    recordBtn.classList.add('recording');
+    recordBtn.textContent = '⏹';
+    hideToolbar();
+    showToast('⏺ 正在录制...');
 
-  if (recording) {
+    window.webkit.messageHandlers.startRecording.postMessage({
+      fps: recSettings.fps,
+      bitrate: recSettings.bitrate,
+    });
+
+    // Show timer (native will call __nativeRecordingStarted for fine-grained control)
     recTimer.classList.add('show');
     let seconds = 0;
     recTime.textContent = '00:00';
@@ -1414,6 +1437,27 @@ async function startRecordingFlow() {
       const s = (seconds % 60).toString().padStart(2, '0');
       recTime.textContent = m + ':' + s;
     }, 1000);
+  } else {
+    // ─── Browser: use WebCodecs / MediaRecorder ───
+    await startRecording();
+
+    if (recording) {
+      recTimer.classList.add('show');
+      let seconds = 0;
+      recTime.textContent = '00:00';
+      recTimerInterval = setInterval(() => {
+        if (!recording) {
+          clearInterval(recTimerInterval);
+          recTimerInterval = null;
+          recTimer.classList.remove('show');
+          return;
+        }
+        seconds++;
+        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const s = (seconds % 60).toString().padStart(2, '0');
+        recTime.textContent = m + ':' + s;
+      }, 1000);
+    }
   }
 }
 
@@ -1421,7 +1465,12 @@ const recordBtn = document.getElementById('btn-record');
 
 recordBtn.addEventListener('click', async () => {
   if (recording) {
-    stopRecording();
+    if (isNative) {
+      // Native app: tell Swift to stop recording
+      window.webkit.messageHandlers.stopRecording.postMessage({});
+    } else {
+      await stopRecording();
+    }
   } else {
     await startRecordingFlow();
   }
@@ -1511,9 +1560,7 @@ async function startRecordingMP4() {
   const ctx = encCanvas.getContext('2d');
 
   // Dynamic import mp4-muxer
-  const { Muxer, ArrayBufferTarget } = await import(
-    'https://cdn.jsdelivr.net/npm/mp4-muxer@4.0.2/build/mp4-muxer.mjs'
-  );
+  const { Muxer, ArrayBufferTarget } = await import('./mp4-muxer.mjs');
 
   const muxerConfig = {
     target: new ArrayBufferTarget(),
@@ -1635,13 +1682,27 @@ async function startRecordingMP4() {
     muxer.finalize();
     const buf = muxer.target.buffer;
     const blob = new Blob([buf], { type: 'video/mp4' });
-    const url = URL.createObjectURL(blob);
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `show-recording-${ts}.mp4`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const fname = `show-recording-${ts}.mp4`;
+
+    if (isNative) {
+      // Native save via ObjC bridge
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result.split(',')[1];
+        window.webkit.messageHandlers.saveFile.postMessage({ data: base64, filename: fname });
+      };
+      reader.readAsDataURL(blob);
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
     stream.getTracks().forEach(t => t.stop());
     stream = null;
     encVideo = null;
@@ -1688,13 +1749,26 @@ async function startRecordingWebM() {
   mediaRecorder.onstop = () => {
     stream.getTracks().forEach(t => t.stop());
     const blob = new Blob(recordedChunks, { type: 'video/webm' });
-    const url = URL.createObjectURL(blob);
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `show-recording-${ts}.webm`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const fname = `show-recording-${ts}.webm`;
+
+    if (isNative) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result.split(',')[1];
+        window.webkit.messageHandlers.saveFile.postMessage({ data: base64, filename: fname });
+      };
+      reader.readAsDataURL(blob);
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
     recordedChunks = [];
     stream = null;
     mediaRecorder = null;
@@ -1709,10 +1783,17 @@ async function startRecordingWebM() {
 }
 
 // ─── Stop Recording ───
-function stopRecording() {
+async function stopRecording() {
+  // Show saving state
+  showToast('正在保存文件...');
+
   // Stop MP4 pipeline
   if (mp4Cleanup) {
-    mp4Cleanup();
+    try {
+      await mp4Cleanup();
+    } catch (e) {
+      console.error('MP4 save error:', e);
+    }
     mp4Cleanup = null;
   }
   // Stop WebM MediaRecorder
@@ -1782,6 +1863,48 @@ setTimeout(() => {
   showToast('⌘V 粘贴 · 拖入文件 · T 添加文字' + hasCam);
 }, 500);
 
+
+// ─── Native App Callbacks (called from Swift) ───
+// These are only used when isNative === true.
+
+window.__nativeRecordingStarted = function() {
+  // Fine-grained control: native started capturing
+  recording = true;
+  recordBtn.classList.add('recording');
+  recordBtn.textContent = '⏹';
+  hideToolbar();
+  showToast('⏺ 正在录制...');
+
+  recTimer.classList.add('show');
+  let seconds = 0;
+  recTime.textContent = '00:00';
+  if (recTimerInterval) clearInterval(recTimerInterval);
+  recTimerInterval = setInterval(() => {
+    seconds++;
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    recTime.textContent = m + ':' + s;
+  }, 1000);
+};
+
+window.__nativeRecordingStopped = function() {
+  // Native finished capture; file is being saved
+  recording = false;
+  recordBtn.classList.remove('recording');
+  recordBtn.textContent = '⏺';
+
+  if (recTimerInterval) {
+    clearInterval(recTimerInterval);
+    recTimerInterval = null;
+  }
+  recTimer.classList.remove('show');
+  showToolbar();
+  showToast('正在保存文件...');
+};
+
+window.__nativeRecordingSaved = function() {
+  showToast('✅ 录制已保存');
+};
 
 console.log('Show — Recording Canvas loaded');
 console.log('⌘V 粘贴图片 | 拖入文件 | 📷 小镜头');
