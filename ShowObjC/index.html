@@ -11,7 +11,7 @@
     --bg-color: #ffffff;
     --bg-type: solid;
     --bg-gradient: none;
-    --toolbar-bg: rgba(30,30,30,0.58);
+    --toolbar-bg: rgba(30,30,30,0.85);
     --accent: #5b9aff;
   }
 
@@ -50,20 +50,13 @@
     gap: 8px;
     padding: 8px 16px;
     background: var(--toolbar-bg);
-    backdrop-filter: blur(20px) saturate(140%);
-    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
     border-radius: 14px;
-    border: 1px solid rgba(255,255,255,0.14);
-    box-shadow: 0 4px 20px rgba(0,0,0,0.32);
-    opacity: 0;
-    transition: opacity 0.25s ease, transform 0.25s ease;
-    pointer-events: none;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     z-index: 5000;
     white-space: nowrap;
-  }
-  #toolbar.visible {
-    opacity: 1;
-    pointer-events: auto;
   }
 
   .tb-group {
@@ -91,18 +84,6 @@
   .tb-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
   .tb-btn.recording { color: #ff4444; }
   .tb-btn.recording:hover { background: rgba(255,68,68,0.2); }
-  .tb-btn.recording.stop-visible {
-    width: 96px;
-    color: #fff;
-    background: #ff3b30;
-    font-size: 13px;
-    font-weight: 700;
-    padding: 0 12px;
-    pointer-events: auto;
-  }
-  .tb-btn.recording.stop-visible:hover {
-    background: #ff5148;
-  }
   .tb-btn.active { color: var(--accent); background: rgba(91,154,255,0.15); }
   .tb-btn.camera-on { color: #4cd964; }
   .tb-btn.camera-on:hover { background: rgba(76,217,100,0.15); }
@@ -532,6 +513,32 @@
     50% { opacity: 0.3; }
   }
 
+  /* ─── Floating Stop Button (recording) ─── */
+  #stop-btn {
+    position: fixed;
+    bottom: 32px; left: 50%;
+    transform: translateX(-50%);
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: #ff3b30;
+    border: 3px solid rgba(255,255,255,0.3);
+    cursor: pointer;
+    z-index: 999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 20px rgba(255,59,48,0.5);
+    transition: transform 0.15s;
+  }
+  #stop-btn:hover { transform: translateX(-50%) scale(1.1); }
+  #stop-btn::after {
+    content: '';
+    width: 16px; height: 16px;
+    background: #fff;
+    border-radius: 3px;
+  }
+  #stop-btn.show { display: flex; }
+
   /* ─── Toast ─── */
   #toast {
     position: fixed;
@@ -546,19 +553,12 @@
     opacity: 0;
     transition: opacity 0.25s, transform 0.25s;
     pointer-events: none;
-    z-index: 5300;
+    z-index: 300;
   }
   #toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
-  }
 
-  body.recording-clean-ui #toolbar,
-  body.recording-clean-ui #recording-timer,
-  body.recording-clean-ui #toast,
-  body.recording-clean-ui #debug-log {
-    display: none !important;
-  }
 
   /* ─── Scrollbar hide ─── */
   ::-webkit-scrollbar { display: none; }
@@ -606,6 +606,9 @@
     <button class="tb-btn" title="录制设置" id="btn-rec-settings">⚙</button>
   </div>
 </div>
+
+<!-- Floating Stop Button -->
+<div id="stop-btn" title="停止录制"></div>
 
 <!-- Recording Countdown Overlay -->
 <div id="recording-overlay">
@@ -689,7 +692,6 @@
 
 <!-- Toast -->
 <div id="toast"></div>
-<div id="debug-log"></div>
 
 <script>
 // ─── State ───
@@ -699,7 +701,6 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let stream = null;
 let recordingAudioStream = null;
-let pendingRecording = false;
 let dragState = null;  // { el, offsetX, offsetY }
 let resizeState = null; // { el, handle, startX, startY, startW, startH, startL, startT }
 let nextZIndex = 10;
@@ -784,7 +785,6 @@ const canvas = document.getElementById('canvas-area');
 const canvasWrap = document.getElementById('canvas-wrap');
 const toolbar = document.getElementById('toolbar');
 const toast = document.getElementById('toast');
-const debugLog = document.getElementById('debug-log');
 const ctxMenu = document.getElementById('ctx-menu');
 const textEditor = document.getElementById('text-editor');
 
@@ -803,7 +803,12 @@ const recOverlay = document.getElementById('recording-overlay');
 const countNum = document.getElementById('countdown-num');
 const recTimer = document.getElementById('recording-timer');
 const recTime = document.getElementById('rec-time');
+const stopBtn = document.getElementById('stop-btn');
 let recTimerInterval = null;
+
+stopBtn.addEventListener('click', async () => {
+  if (recording) await stopRecording();
+});
 
 // ─── Toast ───
 let toastTimer = null;
@@ -814,40 +819,12 @@ function showToast(msg) {
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2000);
 }
 
-function logDebug(msg) {
-  const line = new Date().toLocaleTimeString() + ' ' + msg;
-  console.log(line);
-  debugLog.style.cssText = 'position:fixed;left:8px;top:8px;max-width:520px;max-height:220px;overflow:auto;background:rgba(0,0,0,.85);color:#0f0;font:12px monospace;padding:8px;z-index:10000;white-space:pre-wrap;pointer-events:none';
-  debugLog.textContent = (line + '\n' + debugLog.textContent).slice(0, 3000);
-}
-
 // ─── Toolbar ───
 function showToolbar() {
   toolbar.classList.add('visible');
 }
 function hideToolbar() {
   toolbar.classList.remove('visible');
-}
-function enterRecordingUI() {
-  logDebug('enterRecordingUI');
-  toolbar.querySelectorAll('.tb-group').forEach(group => {
-    group.style.display = group.contains(recordBtn) ? 'flex' : 'none';
-  });
-  toolbar.querySelectorAll('.tb-btn').forEach(btn => {
-    if (btn !== recordBtn) btn.style.display = 'none';
-  });
-  toolbar.classList.add('visible');
-  logDebug('recordBtn=' + recordBtn.outerHTML);
-}
-function exitRecordingUI() {
-  logDebug('exitRecordingUI');
-  toolbar.querySelectorAll('.tb-group').forEach(group => {
-    group.style.display = '';
-  });
-  toolbar.querySelectorAll('.tb-btn').forEach(btn => {
-    btn.style.display = '';
-  });
-  toolbar.classList.add('visible');
 }
 
 // Toolbar always visible by default — hidden only during recording
@@ -1131,66 +1108,28 @@ document.addEventListener('mouseup', () => {
 });
 
 // ─── Paste (Cmd+V) ───
-async function handleClipboardItems(items, x, y) {
+document.addEventListener('paste', async (e) => {
+  e.preventDefault();
+  const items = e.clipboardData.items;
   let handled = false;
   for (const item of items) {
-    const type = item.type || (item.types && item.types[0]) || '';
-    if (type.startsWith('image/')) {
-      const file = item.getAsFile ? item.getAsFile() : await item.getType(type);
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile();
       if (!file) continue;
       const url = URL.createObjectURL(file);
-      addImage(url, x, y);
+      addImage(url, e.clientX || 100, e.clientY || 100);
       handled = true;
       showToast('图片已粘贴');
-    } else if (type === 'text/plain') {
-      if (item.getAsString) {
-        item.getAsString(text => {
-          if (text.trim()) {
-            addText(text.trim(), x, y);
-            showToast('文字已粘贴');
-          }
-        });
-      } else {
-        const text = await (await item.getType('text/plain')).text();
+    } else if (item.type === 'text/plain') {
+      item.getAsString(text => {
         if (text.trim()) {
-          addText(text.trim(), x, y);
+          addText(text.trim(), e.clientX || 100, e.clientY || 100);
           showToast('文字已粘贴');
         }
-      }
+      });
       handled = true;
     }
   }
-  return handled;
-}
-
-function pasteCenterPoint() {
-  const rect = canvas.getBoundingClientRect();
-  return {
-    x: rect.width / 2 - 120,
-    y: rect.height / 2 - 80,
-  };
-}
-
-window.__nativePasteImage = function(dataUrl) {
-  const p = pasteCenterPoint();
-  addImage(dataUrl, p.x, p.y);
-  showToast('图片已粘贴');
-};
-
-window.__nativePasteText = function(text) {
-  const p = pasteCenterPoint();
-  addText(text, p.x, p.y);
-  showToast('文字已粘贴');
-};
-
-document.addEventListener('paste', async (e) => {
-  e.preventDefault();
-  if (isNative && window.webkit?.messageHandlers?.pasteFromClipboard) {
-    window.webkit.messageHandlers.pasteFromClipboard.postMessage({});
-    return;
-  }
-  const p = pasteCenterPoint();
-  const handled = await handleClipboardItems(e.clipboardData.items, p.x, p.y);
   if (!handled) {
     showToast('剪贴板内容不支持');
   }
@@ -1223,28 +1162,6 @@ canvasWrap.addEventListener('drop', (e) => {
 
 // ─── Keyboard shortcuts ───
 document.addEventListener('keydown', (e) => {
-  if (recording && (e.key === 'Escape' || e.key === ' ')) {
-    e.preventDefault();
-    stopRecording();
-    return;
-  }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
-    if (e.target && e.target.closest && e.target.closest('.text-content[contenteditable]')) return;
-    e.preventDefault();
-    if (isNative && window.webkit?.messageHandlers?.pasteFromClipboard) {
-      window.webkit.messageHandlers.pasteFromClipboard.postMessage({});
-      return;
-    }
-    const p = pasteCenterPoint();
-    navigator.clipboard.read().then(async items => {
-      const handled = await handleClipboardItems(items, p.x, p.y);
-      if (!handled) showToast('剪贴板内容不支持');
-    }).catch(() => {
-      textEditor.focus();
-      document.execCommand('paste');
-    });
-    return;
-  }
   if ((e.key === 'Delete' || e.key === 'Backspace') && selectedItem) {
     if (e.target === textEditor) return;
     deleteItem(selectedItem);
@@ -1497,37 +1414,32 @@ async function startRecordingFlow() {
   recOverlay.classList.remove('show');
   recordingCountdown = false;
 
-  if (false) {
-    // ─── Native ScreenCaptureKit path (not implemented) ───
-  } else {
-    // ─── Browser: use WebCodecs / MediaRecorder ───
-    await startRecording();
+  // Browser recording (works in WKWebView too)
+  await startRecording();
 
-    if (recording) {
-      recTimer.classList.add('show');
-      let seconds = 0;
-      recTime.textContent = '00:00';
-      recTimerInterval = setInterval(() => {
-        if (!recording) {
-          clearInterval(recTimerInterval);
-          recTimerInterval = null;
-          recTimer.classList.remove('show');
-          return;
-        }
-        seconds++;
-        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-        const s = (seconds % 60).toString().padStart(2, '0');
-        recTime.textContent = m + ':' + s;
-      }, 1000);
-    }
+  if (recording) {
+    recTimer.classList.add('show');
+    let seconds = 0;
+    recTime.textContent = '00:00';
+    recTimerInterval = setInterval(() => {
+      if (!recording) {
+        clearInterval(recTimerInterval);
+        recTimerInterval = null;
+        recTimer.classList.remove('show');
+        return;
+      }
+      seconds++;
+      const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+      const s = (seconds % 60).toString().padStart(2, '0');
+      recTime.textContent = m + ':' + s;
+    }, 1000);
   }
 }
 
 const recordBtn = document.getElementById('btn-record');
 
 recordBtn.addEventListener('click', async () => {
-  logDebug('record button clicked, recording=' + recording + ', pending=' + pendingRecording);
-  if (recording || pendingRecording) {
+  if (recording) {
     await stopRecording();
   } else {
     await startRecordingFlow();
@@ -1576,6 +1488,7 @@ recBitrateSelect.addEventListener('change', () => {
 });
 
 async function startRecording() {
+  // Use WebM MediaRecorder (works in all browsers + WKWebView)
   await startRecordingWebM();
 }
 
@@ -1592,6 +1505,8 @@ async function startRecordingMP4() {
   const vSettings = videoTrack.getSettings();
   const width = vSettings.width || 1920;
   const height = vSettings.height || 1080;
+  const toolbarH = 64; // toolbar area to exclude from recording
+  const croppedHeight = height - toolbarH;
 
   // Hidden video to receive the display stream
   encVideo = document.createElement('video');
@@ -1601,20 +1516,18 @@ async function startRecordingMP4() {
   encVideo.playsInline = true;
   await encVideo.play();
 
-  // Canvas for frame extraction
+  // Canvas for frame extraction (crop toolbar)
   encCanvas = document.createElement('canvas');
   encCanvas.width = width;
-  encCanvas.height = height;
+  encCanvas.height = croppedHeight;
   const ctx = encCanvas.getContext('2d');
 
-  // Use pre-loaded mp4-muxer
-  console.log('__mp4Muxer =', window.__mp4Muxer);
-  if (!window.__mp4Muxer) throw new Error('mp4-muxer not loaded');
-  const { Muxer, ArrayBufferTarget } = window.__mp4Muxer;
+  // Dynamic import mp4-muxer
+  const { Muxer, ArrayBufferTarget } = await import('./mp4-muxer.mjs');
 
   const muxerConfig = {
     target: new ArrayBufferTarget(),
-    video: { codec: 'avc', width, height },
+    video: { codec: 'avc', width, height: croppedHeight },
     fastStart: 'in-memory',
   };
 
@@ -1639,7 +1552,7 @@ async function startRecordingMP4() {
   videoEncoder.configure({
     codec,
     width,
-    height,
+    height: croppedHeight,
     bitrate: recSettings.bitrate * 1_000_000,
     framerate: recSettings.fps,
     avc: { format: 'avc' },
@@ -1696,7 +1609,8 @@ async function startRecordingMP4() {
     if (elapsed < frameInterval - 5) return;
     lastFrameTime = timestamp - (elapsed % frameInterval);
 
-    ctx.drawImage(encVideo, 0, 0, width, height);
+    // Crop: draw top portion only, exclude bottom toolbar
+    ctx.drawImage(encVideo, 0, 0, width, croppedHeight, 0, 0, width, croppedHeight);
     const frame = new VideoFrame(encCanvas, {
       timestamp: Math.round(timestamp * 1000),
       duration: Math.round(1_000_000 / fps),
@@ -1709,7 +1623,7 @@ async function startRecordingMP4() {
   recording = true;
   recordBtn.classList.add('recording');
   recordBtn.textContent = '⏹';
-  hideToolbar();
+  stopBtn.classList.add('show');
   const label = audioTrack ? 'MP4 + 音频' : 'MP4 (无音频)';
   showToast('⏺ 正在录制 ' + label + '...');
   animId = requestAnimationFrame(captureFrame);
@@ -1762,25 +1676,17 @@ async function startRecordingMP4() {
 }
 
 async function pickBestCodec() {
-  // isConfigSupported is unreliable in WKWebView — just try configuring directly
-  const codecs = [
-    'avc1.640028',  // High Profile Level 4.0
-    'avc1.4D0028',  // Main Profile
-    'avc1.42E01E',  // Baseline Level 3.0
-    'avc1.42001E',  // Baseline
-    'avc1.420016',  // Baseline Level 2.2
+  // Try hardware-accelerated H.264 high profile first, fall back to baseline
+  const configs = [
+    { codec: 'avc1.640028' },  // High Profile Level 4.0
+    { codec: 'avc1.4D0028' },  // Main Profile
+    { codec: 'avc1.42001E' },  // Baseline
+    { codec: 'avc1.42001E', hardwareAcceleration: 'prefer-hardware' },
   ];
-  for (const codec of codecs) {
+  for (const cfg of configs) {
     try {
-      const support = await VideoEncoder.isConfigSupported({ codec, width: 1280, height: 720 });
-      if (support.supported) return codec;
-    } catch (_) {}
-    // Also try actually creating an encoder as secondary check
-    try {
-      const testEnc = new VideoEncoder({ output: () => {}, error: () => {} });
-      testEnc.configure({ codec, width: 1280, height: 720, bitrate: 1_000_000, framerate: 30 });
-      testEnc.close();
-      return codec;
+      const support = await VideoEncoder.isConfigSupported(cfg);
+      if (support.supported) return cfg.codec;
     } catch (_) {}
   }
   throw new Error('No supported H.264 codec found');
@@ -1788,7 +1694,6 @@ async function pickBestCodec() {
 
 // ─── WebM Fallback (MediaRecorder) ───
 async function startRecordingWebM() {
-  logDebug('startRecordingWebM: recording clean canvas only');
   const rect = canvasWrap.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   const recCanvas = document.createElement('canvas');
@@ -1797,6 +1702,45 @@ async function startRecordingWebM() {
   const recCtx = recCanvas.getContext('2d');
   recCtx.scale(dpr, dpr);
   let renderLoop = 0;
+
+  function roundedRect(ctx, x, y, w, h, r) {
+    const radius = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  }
+
+  function drawVideoCover(ctx, video, x, y, w, h) {
+    const zoom = parseFloat(getComputedStyle(video).scale) || 1;
+    const srcAspect = video.videoWidth / video.videoHeight;
+    const dstAspect = w / h;
+    let sw = video.videoWidth;
+    let sh = video.videoHeight;
+    if (srcAspect > dstAspect) {
+      sw = video.videoHeight * dstAspect;
+    } else {
+      sh = video.videoWidth / dstAspect;
+    }
+    sw = sw / zoom;
+    sh = sh / zoom;
+    const sx = (video.videoWidth - sw) / 2;
+    const sy = (video.videoHeight - sh) / 2;
+    if (getComputedStyle(video).transform !== 'none') {
+      ctx.translate(x + w, y);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+    } else {
+      ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+    }
+  }
 
   function renderFrame() {
     recCtx.save();
@@ -1821,27 +1765,7 @@ async function startRecordingWebM() {
           recCtx.save();
           roundedRect(recCtx, x, y, r.width, r.height, radius);
           recCtx.clip();
-          const zoom = parseFloat(getComputedStyle(video).scale) || 1;
-          const srcAspect = video.videoWidth / video.videoHeight;
-          const dstAspect = r.width / r.height;
-          let sw = video.videoWidth;
-          let sh = video.videoHeight;
-          if (srcAspect > dstAspect) {
-            sw = video.videoHeight * dstAspect;
-          } else {
-            sh = video.videoWidth / dstAspect;
-          }
-          sw = sw / zoom;
-          sh = sh / zoom;
-          const sx = (video.videoWidth - sw) / 2;
-          const sy = (video.videoHeight - sh) / 2;
-          if (getComputedStyle(video).transform !== 'none') {
-            recCtx.translate(x + r.width, y);
-            recCtx.scale(-1, 1);
-            recCtx.drawImage(video, sx, sy, sw, sh, 0, 0, r.width, r.height);
-          } else {
-            recCtx.drawImage(video, sx, sy, sw, sh, x, y, r.width, r.height);
-          }
+          drawVideoCover(recCtx, video, x, y, r.width, r.height);
           recCtx.restore();
         } else if (img && img.complete) {
           recCtx.drawImage(img, x, y, r.width, r.height);
@@ -1857,22 +1781,7 @@ async function startRecordingWebM() {
       } catch (_) {}
     }
     recCtx.restore();
-    if (recording || pendingRecording) renderLoop = requestAnimationFrame(renderFrame);
-  }
-
-  function roundedRect(ctx, x, y, w, h, r) {
-    const radius = Math.min(r, w / 2, h / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + radius, y);
-    ctx.lineTo(x + w - radius, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
-    ctx.lineTo(x + w, y + h - radius);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
-    ctx.lineTo(x + radius, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
-    ctx.lineTo(x, y + radius);
-    ctx.quadraticCurveTo(x, y, x + radius, y);
-    ctx.closePath();
+    if (recording) renderLoop = requestAnimationFrame(renderFrame);
   }
 
   stream = recCanvas.captureStream(recSettings.fps);
@@ -1886,12 +1795,9 @@ async function startRecordingWebM() {
       video: false,
     });
     recordingAudioStream.getAudioTracks().forEach(track => stream.addTrack(track));
-    logDebug('audio track added');
   } catch (e) {
-    logDebug('audio unavailable: ' + e.message);
     showToast('麦克风不可用，仅录制画面');
   }
-  logDebug('canvas stream: ' + recCanvas.width + 'x' + recCanvas.height);
 
   recordedChunks = [];
   mediaRecorder = new MediaRecorder(stream, {
@@ -1939,31 +1845,16 @@ async function startRecordingWebM() {
   };
 
   mediaRecorder.start(100);
-  logDebug('mediaRecorder started: ' + mediaRecorder.state);
-  pendingRecording = false;
   recording = true;
   renderFrame();
   recordBtn.classList.add('recording');
-  recordBtn.classList.add('stop-visible');
-  recordBtn.textContent = '停止';
-  recordBtn.title = '停止录制';
-  enterRecordingUI();
-  showToast('⏺ 正在录制...');
+  recordBtn.textContent = '⏹';
+  stopBtn.classList.add('show');
+  showToast('⏺ 正在录制，保存后自动转 MP4...');
 }
 
 // ─── Stop Recording ───
 async function stopRecording() {
-  logDebug('stopRecording called');
-  if (pendingRecording && !recording) {
-    pendingRecording = false;
-    recordBtn.classList.remove('recording');
-    recordBtn.classList.remove('stop-visible');
-    recordBtn.textContent = '⏺';
-    recordBtn.title = '录制';
-    exitRecordingUI();
-    showToast('录制已取消');
-    return;
-  }
   // Show saving state
   showToast('正在保存文件...');
 
@@ -1983,9 +1874,8 @@ async function stopRecording() {
 
   recording = false;
   recordBtn.classList.remove('recording');
-  recordBtn.classList.remove('stop-visible');
   recordBtn.textContent = '⏺';
-  recordBtn.title = '录制';
+  stopBtn.classList.remove('show');
 
   if (recTimerInterval) {
     clearInterval(recTimerInterval);
@@ -1993,8 +1883,7 @@ async function stopRecording() {
   }
   recTimer.classList.remove('show');
 
-  document.body.classList.remove('recording-clean-ui');
-  exitRecordingUI();
+  showToolbar();
   showToast('✅ 录制已保存');
 }
 
@@ -2053,7 +1942,7 @@ canvas.addEventListener('mousedown', (e) => {
 // Show welcome toast
 setTimeout(() => {
   const hasCam = cameraActive ? ' 📹' : '';
-  showToast('Build __SHOW_BUILD_ID__ · ⌘V 粘贴 · 拖入文件 · T 添加文字' + hasCam);
+  showToast('⌘V 粘贴 · 拖入文件 · T 添加文字' + hasCam);
 }, 500);
 
 
@@ -2085,6 +1974,7 @@ window.__nativeRecordingStopped = function() {
   recording = false;
   recordBtn.classList.remove('recording');
   recordBtn.textContent = '⏺';
+  stopBtn.classList.remove('show');
 
   if (recTimerInterval) {
     clearInterval(recTimerInterval);
