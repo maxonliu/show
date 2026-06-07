@@ -871,6 +871,8 @@ document.querySelectorAll('.tb-color').forEach(btn => {
       canvasWrap.style.background = bg;
       canvasWrap.classList.remove('gradient');
     }
+    document.body.style.background = canvasWrap.style.background;
+    document.documentElement.style.background = canvasWrap.style.background;
     document.querySelectorAll('.tb-color').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
   });
@@ -879,6 +881,8 @@ document.getElementById('color-picker').addEventListener('input', (e) => {
   const c = e.target.value;
   canvasWrap.style.background = c;
   canvasWrap.classList.remove('gradient');
+  document.body.style.background = c;
+  document.documentElement.style.background = c;
   document.querySelectorAll('.tb-color').forEach(b => b.classList.remove('active'));
 });
 
@@ -1539,7 +1543,7 @@ async function startRecording() {
 // ─── MP4 Pipeline (WebCodecs + mp4-muxer) ───
 async function startRecordingMP4() {
   stream = await navigator.mediaDevices.getDisplayMedia({
-    video: { displaySurface: 'browser', preferCurrentTab: true },
+    video: { displaySurface: 'browser', preferCurrentTab: true, cursor: 'always' },
     audio: true,
   });
   if (!stream) { showToast('未选择共享内容'); return; }
@@ -1739,7 +1743,7 @@ async function pickBestCodec() {
 // ─── WebM Fallback (MediaRecorder) ───
 async function startRecordingWebM() {
   stream = await navigator.mediaDevices.getDisplayMedia({
-    video: { displaySurface: 'browser', preferCurrentTab: true },
+    video: { displaySurface: 'browser', preferCurrentTab: true, cursor: 'always' },
     audio: true,
   });
   if (!stream) { showToast('未选择共享内容'); return; }

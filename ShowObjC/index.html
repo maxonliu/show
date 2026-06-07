@@ -728,6 +728,7 @@ let nextZIndex = 10;
 
 // Toolbar drag state
 let tbDrag = null; // { offsetX, offsetY, wrapRect }
+let mousePos = { x: 0, y: 0, visible: false };
 
 // Detect running inside native macOS app (injected by WKWebView)
 const isNative = window.__isNativeApp === true;
@@ -869,13 +870,14 @@ const bgPresets = {
 };
 
 function applyBackground(value) {
-  if (value === 'custom') {
-    canvasWrap.style.background = document.getElementById('color-picker').value;
-    canvasWrap.classList.remove('gradient');
-    return;
-  }
-  canvasWrap.style.background = bgPresets[value] || '#ffffff';
-  canvasWrap.classList.toggle('gradient', (bgPresets[value] || '').includes('gradient'));
+  const bg = (value === 'custom')
+    ? document.getElementById('color-picker').value
+    : (bgPresets[value] || '#ffffff');
+  canvasWrap.style.background = bg;
+  canvasWrap.classList.toggle('gradient', bg.includes('gradient'));
+  // Sync body background so display capture doesn't show black borders
+  document.body.style.background = bg;
+  document.documentElement.style.background = bg;
 }
 
 document.getElementById('bg-preset').addEventListener('change', (e) => {
@@ -887,6 +889,8 @@ document.getElementById('color-picker').addEventListener('input', (e) => {
   document.getElementById('bg-preset').value = 'custom';
   canvasWrap.style.background = c;
   canvasWrap.classList.remove('gradient');
+  document.body.style.background = c;
+  document.documentElement.style.background = c;
 });
 
 // ─── Add Items ───
@@ -1053,6 +1057,7 @@ function makeDraggable(el) {
 }
 
 document.addEventListener('mousemove', (e) => {
+  mousePos = { x: e.clientX, y: e.clientY, visible: true };
   if (dragState) {
     const { el, offsetX, offsetY, canvasLeft, canvasTop } = dragState;
     const x = e.clientX - canvasLeft - offsetX;
@@ -1609,7 +1614,7 @@ async function startRecording() {
 // ─── MP4 Pipeline (WebCodecs + mp4-muxer) ───
 async function startRecordingMP4() {
   stream = await navigator.mediaDevices.getDisplayMedia({
-    video: { displaySurface: 'browser', preferCurrentTab: true },
+    video: { displaySurface: 'browser', preferCurrentTab: true, cursor: 'always' },
     audio: true,
   });
   if (!stream) { showToast('未选择共享内容'); return; }
@@ -1855,11 +1860,83 @@ async function startRecordingWebM() {
     }
   }
 
+  function drawRecordingBackground(ctx, w, h) {
+    const selected = document.getElementById('bg-preset')?.value || 'paper';
+    const bg = selected === 'custom'
+      ? document.getElementById('color-picker').value
+      : (bgPresets[selected] || getComputedStyle(canvasWrap).backgroundColor || '#ffffff');
+    if (!bg.includes('gradient')) {
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, w, h);
+      return;
+    }
+    let grad;
+    if (selected === 'silver') {
+      grad = ctx.createRadialGradient(w * 0.3, h * 0.2, 0, w * 0.5, h * 0.5, Math.max(w, h) * 0.75);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.35, '#e9edf3');
+      grad.addColorStop(1, '#cfd6df');
+    } else if (selected === 'midnight') {
+      grad = ctx.createLinearGradient(0, 0, w, h);
+      grad.addColorStop(0, '#0b0f17');
+      grad.addColorStop(0.52, '#171c27');
+      grad.addColorStop(1, '#06070a');
+    } else if (selected === 'aurora') {
+      grad = ctx.createLinearGradient(0, 0, w, h);
+      grad.addColorStop(0, '#0f172a');
+      grad.addColorStop(0.38, '#312e81');
+      grad.addColorStop(0.72, '#0e7490');
+      grad.addColorStop(1, '#ecfeff');
+    } else if (selected === 'warm') {
+      grad = ctx.createLinearGradient(0, 0, w, h);
+      grad.addColorStop(0, '#fff7ed');
+      grad.addColorStop(0.45, '#fef3c7');
+      grad.addColorStop(1, '#ffffff');
+    } else {
+      grad = ctx.createLinearGradient(0, 0, w, h);
+      grad.addColorStop(0, '#f8fafc');
+      grad.addColorStop(0.45, '#eef2f7');
+      grad.addColorStop(1, '#ffffff');
+    }
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  function drawCursor(ctx) {
+    if (!mousePos.visible) return;
+    const x = mousePos.x - rect.left;
+    const y = mousePos.y - rect.top;
+    if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(0.92, 0.92);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, 26);
+    ctx.lineTo(7, 20);
+    ctx.lineTo(12, 32);
+    ctx.lineTo(17, 30);
+    ctx.lineTo(12, 18);
+    ctx.lineTo(22, 18);
+    ctx.closePath();
+    ctx.shadowColor = 'rgba(0,0,0,0.18)';
+    ctx.shadowBlur = 1.5;
+    ctx.shadowOffsetX = 0.8;
+    ctx.shadowOffsetY = 1.2;
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = 'rgba(0,0,0,0.72)';
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function renderFrame() {
     recCtx.save();
     recCtx.clearRect(0, 0, rect.width, rect.height);
-    recCtx.fillStyle = getComputedStyle(canvasWrap).backgroundColor || '#fff';
-    recCtx.fillRect(0, 0, rect.width, rect.height);
+    drawRecordingBackground(recCtx, rect.width, rect.height);
 
     const items = [...canvas.querySelectorAll('.canvas-item, #camera-pip')]
       .filter(el => el.style.display !== 'none')
@@ -1893,6 +1970,7 @@ async function startRecordingWebM() {
         }
       } catch (_) {}
     }
+    drawCursor(recCtx);
     recCtx.restore();
     if (recording) renderLoop = requestAnimationFrame(renderFrame);
   }
