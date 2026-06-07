@@ -154,8 +154,9 @@
   }
   .canvas-item img {
     display: block;
-    max-width: 400px;
-    max-height: 400px;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
     border-radius: 4px;
     pointer-events: none;
   }
@@ -729,6 +730,10 @@ let mousePos = { x: 0, y: 0, visible: false };
 // Detect running inside native macOS app (injected by WKWebView)
 const isNative = window.__isNativeApp === true;
 
+// Undo stack
+let undoStack = [];
+const MAX_UNDO = 50;
+
 // Camera state
 let cameraStream = null;
 let cameraActive = false;
@@ -897,7 +902,27 @@ function addImage(url, x, y) {
   const img = document.createElement('img');
   img.src = url;
   img.draggable = false;
+  div.style.width = 'auto';
+  div.style.height = 'auto';
   div.appendChild(img);
+  // Wait for image to load, then size relative to canvas
+  img.onload = () => {
+    const cw = canvasWrap.clientWidth;
+    const ch = canvasWrap.clientHeight;
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    // Max: 70% of canvas width, 60% of canvas height, capped at 640px
+    const maxW = Math.min(cw * 0.7, 640);
+    const maxH = Math.min(ch * 0.6, 480);
+    let w = iw, h = ih;
+    if (w > maxW || h > maxH) {
+      const ratio = Math.min(maxW / w, maxH / h);
+      w = Math.round(w * ratio);
+      h = Math.round(h * ratio);
+    }
+    div.style.width = w + 'px';
+    div.style.height = h + 'px';
+  };
   addDeleteBtn(div);
   addResizeHandles(div);
   positionItem(div, x, y);
@@ -984,9 +1009,14 @@ function addResizeHandles(el) {
 }
 
 function deleteItem(el) {
+  // Save to undo stack before removing
+  const parent = el.parentNode;
+  const nextSibling = el.nextSibling;
+  undoStack.push({ el, parent, nextSibling, zIndex: el.style.zIndex });
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
   if (el === selectedItem) selectedItem = null;
   el.remove();
-  showToast('已删除');
+  showToast('已删除 · ⌘Z 撤销');
 }
 
 function positionItem(el, x, y) {
@@ -1279,6 +1309,23 @@ document.addEventListener('keydown', (e) => {
   if ((e.key === 'Delete' || e.key === 'Backspace') && selectedItem) {
     if (e.target === textEditor) return;
     deleteItem(selectedItem);
+    e.preventDefault();
+  }
+  // Cmd+Z / Ctrl+Z: undo delete
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+    if (undoStack.length > 0) {
+      const last = undoStack.pop();
+      if (last.parent) {
+        if (last.nextSibling) {
+          last.parent.insertBefore(last.el, last.nextSibling);
+        } else {
+          last.parent.appendChild(last.el);
+        }
+        last.el.style.zIndex = last.zIndex || nextZIndex++;
+        selectItem(last.el);
+        showToast('已撤销');
+      }
+    }
     e.preventDefault();
   }
   if (e.key === 'Escape') {
@@ -1864,6 +1911,18 @@ async function startRecordingWebM() {
     }
   }
 
+  function drawImageContain(ctx, img, x, y, w, h) {
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
+    if (!iw || !ih || !w || !h) return;
+    const ratio = Math.min(w / iw, h / ih);
+    const dw = iw * ratio;
+    const dh = ih * ratio;
+    const dx = x + (w - dw) / 2;
+    const dy = y + (h - dh) / 2;
+    ctx.drawImage(img, dx, dy, dw, dh);
+  }
+
   function drawRecordingBackground(ctx, w, h) {
     const selected = document.getElementById('bg-preset')?.value || 'paper';
     const bg = selected === 'custom'
@@ -1962,7 +2021,7 @@ async function startRecordingWebM() {
           drawVideoCover(recCtx, video, x, y, r.width, r.height);
           recCtx.restore();
         } else if (img && img.complete) {
-          recCtx.drawImage(img, x, y, r.width, r.height);
+          drawImageContain(recCtx, img, x, y, r.width, r.height);
         } else if (text) {
           const style = getComputedStyle(text);
           recCtx.fillStyle = style.backgroundColor;
