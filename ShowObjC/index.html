@@ -66,8 +66,13 @@
     border-radius: 14px;
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-    z-index: 5000;
+    z-index: 100;
     white-space: nowrap;
+    cursor: grab;
+  }
+  #toolbar:active { cursor: grabbing; }
+  #toolbar.dragging {
+    box-shadow: 0 8px 30px rgba(0,0,0,0.7);
   }
 
   .tb-group {
@@ -548,32 +553,6 @@
     50% { opacity: 0.3; }
   }
 
-  /* ─── Floating Stop Button (recording) ─── */
-  #stop-btn {
-    position: fixed;
-    bottom: 32px; left: 50%;
-    transform: translateX(-50%);
-    width: 48px; height: 48px;
-    border-radius: 50%;
-    background: #ff3b30;
-    border: 3px solid rgba(255,255,255,0.3);
-    cursor: pointer;
-    z-index: 999;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 4px 20px rgba(255,59,48,0.5);
-    transition: transform 0.15s;
-  }
-  #stop-btn:hover { transform: translateX(-50%) scale(1.1); }
-  #stop-btn::after {
-    content: '';
-    width: 16px; height: 16px;
-    background: #fff;
-    border-radius: 3px;
-  }
-  #stop-btn.show { display: flex; }
-
   /* ─── Toast ─── */
   #toast {
     position: fixed;
@@ -646,9 +625,6 @@
     <button class="tb-btn" title="录制设置" id="btn-rec-settings">⚙</button>
   </div>
 </div>
-
-<!-- Floating Stop Button -->
-<div id="stop-btn" title="停止录制"></div>
 
 <!-- Recording Countdown Overlay -->
 <div id="recording-overlay">
@@ -750,6 +726,9 @@ let dragState = null;  // { el, offsetX, offsetY }
 let resizeState = null; // { el, handle, startX, startY, startW, startH, startL, startT }
 let nextZIndex = 10;
 
+// Toolbar drag state
+let tbDrag = null; // { offsetX, offsetY, wrapRect }
+
 // Detect running inside native macOS app (injected by WKWebView)
 const isNative = window.__isNativeApp === true;
 
@@ -849,12 +828,7 @@ const recOverlay = document.getElementById('recording-overlay');
 const countNum = document.getElementById('countdown-num');
 const recTimer = document.getElementById('recording-timer');
 const recTime = document.getElementById('rec-time');
-const stopBtn = document.getElementById('stop-btn');
 let recTimerInterval = null;
-
-stopBtn.addEventListener('click', async () => {
-  if (recording) await stopRecording();
-});
 
 // ─── Toast ───
 let toastTimer = null;
@@ -1096,6 +1070,17 @@ document.addEventListener('mousemove', (e) => {
     camPosBtns.forEach(b => b.classList.remove('active'));
     camSettings.position = 'custom';
   }
+  if (tbDrag) {
+    const { offsetX, offsetY, wr } = tbDrag;
+    let nx = e.clientX - wr.left - offsetX;
+    let ny = e.clientY - wr.top - offsetY;
+    nx = Math.max(0, Math.min(nx, wr.width - toolbar.offsetWidth));
+    ny = Math.max(0, Math.min(ny, wr.height - toolbar.offsetHeight));
+    toolbar.style.left = nx + 'px';
+    toolbar.style.top = ny + 'px';
+    toolbar.style.bottom = 'auto';
+    toolbar.style.transform = 'none';
+  }
   if (cameraResizeState) {
     const dx = e.clientX - cameraResizeState.startX;
     const dy = e.clientY - cameraResizeState.startY;
@@ -1166,6 +1151,10 @@ document.addEventListener('mouseup', () => {
   }
   if (resizeState) {
     resizeState = null;
+  }
+  if (tbDrag) {
+    tbDrag = null;
+    toolbar.classList.remove('dragging');
   }
 });
 
@@ -1748,7 +1737,6 @@ async function startRecordingMP4() {
   recording = true;
   recordBtn.classList.add('recording');
   recordBtn.textContent = '⏹';
-  stopBtn.classList.add('show');
   const label = audioTrack ? 'MP4 + 音频' : 'MP4 (无音频)';
   showToast('⏺ 正在录制 ' + label + '...');
   animId = requestAnimationFrame(captureFrame);
@@ -1974,7 +1962,6 @@ async function startRecordingWebM() {
   renderFrame();
   recordBtn.classList.add('recording');
   recordBtn.textContent = '⏹';
-  stopBtn.classList.add('show');
   showToast('⏺ 正在录制，保存后自动转 MP4...');
 }
 
@@ -2000,7 +1987,6 @@ async function stopRecording() {
   recording = false;
   recordBtn.classList.remove('recording');
   recordBtn.textContent = '⏺';
-  stopBtn.classList.remove('show');
 
   if (recTimerInterval) {
     clearInterval(recTimerInterval);
@@ -2052,6 +2038,21 @@ document.addEventListener('fullscreenchange', () => {
   btn.classList.toggle('active', !!document.fullscreenElement);
 });
 
+// ─── Toolbar drag ───
+toolbar.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  if (e.target.closest('.tb-btn, .tb-color, input, select, button')) return;
+  e.preventDefault();
+  const wr = canvasWrap.getBoundingClientRect();
+  const tr = toolbar.getBoundingClientRect();
+  tbDrag = {
+    offsetX: e.clientX - tr.left,
+    offsetY: e.clientY - tr.top,
+    wr
+  };
+  toolbar.classList.add('dragging');
+});
+
 // ─── Init ───
 
 // Focus hidden textarea so paste events fire (WKWebView needs an editable element focused)
@@ -2099,7 +2100,6 @@ window.__nativeRecordingStopped = function() {
   recording = false;
   recordBtn.classList.remove('recording');
   recordBtn.textContent = '⏺';
-  stopBtn.classList.remove('show');
 
   if (recTimerInterval) {
     clearInterval(recTimerInterval);

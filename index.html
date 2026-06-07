@@ -57,6 +57,11 @@
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     z-index: 100;
     white-space: nowrap;
+    cursor: grab;
+  }
+  #toolbar:active { cursor: grabbing; }
+  #toolbar.dragging {
+    box-shadow: 0 8px 30px rgba(0,0,0,0.7);
   }
 
   .tb-group {
@@ -726,6 +731,9 @@ let dragState = null;  // { el, offsetX, offsetY }
 let resizeState = null; // { el, handle, startX, startY, startW, startH, startL, startT }
 let nextZIndex = 10;
 
+// Toolbar drag state
+let tbDrag = null; // { offsetX, offsetY, wrapRect }
+
 // Detect running inside native macOS app (injected by WKWebView)
 const isNative = window.__isNativeApp === true;
 
@@ -1055,6 +1063,17 @@ document.addEventListener('mousemove', (e) => {
     camPosBtns.forEach(b => b.classList.remove('active'));
     camSettings.position = 'custom';
   }
+  if (tbDrag) {
+    const { offsetX, offsetY, wr } = tbDrag;
+    let nx = e.clientX - wr.left - offsetX;
+    let ny = e.clientY - wr.top - offsetY;
+    nx = Math.max(0, Math.min(nx, wr.width - toolbar.offsetWidth));
+    ny = Math.max(0, Math.min(ny, wr.height - toolbar.offsetHeight));
+    toolbar.style.left = nx + 'px';
+    toolbar.style.top = ny + 'px';
+    toolbar.style.bottom = 'auto';
+    toolbar.style.transform = 'none';
+  }
   if (cameraResizeState) {
     const dx = e.clientX - cameraResizeState.startX;
     const dy = e.clientY - cameraResizeState.startY;
@@ -1125,6 +1144,10 @@ document.addEventListener('mouseup', () => {
   }
   if (resizeState) {
     resizeState = null;
+  }
+  if (tbDrag) {
+    tbDrag = null;
+    toolbar.classList.remove('dragging');
   }
 });
 
@@ -1839,6 +1862,21 @@ document.addEventListener('fullscreenchange', () => {
   const btn = document.getElementById('btn-fullscreen');
   btn.textContent = document.fullscreenElement ? '⛶' : '⛶';
   btn.classList.toggle('active', !!document.fullscreenElement);
+});
+
+// ─── Toolbar drag ───
+toolbar.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  if (e.target.closest('.tb-btn, .tb-color, input, select, button')) return;
+  e.preventDefault();
+  const wr = canvasWrap.getBoundingClientRect();
+  const tr = toolbar.getBoundingClientRect();
+  tbDrag = {
+    offsetX: e.clientX - tr.left,
+    offsetY: e.clientY - tr.top,
+    wr
+  };
+  toolbar.classList.add('dragging');
 });
 
 // ─── Init ───
