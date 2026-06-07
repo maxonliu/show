@@ -483,9 +483,6 @@
   }
 
   /* ─── Preset buttons ─── */
-  .preset-btn { font-size: 13px; }
-  .preset-btn.active { color: var(--accent); background: rgba(91,154,255,0.15); }
-
   /* ─── Recording Overlay (countdown) ─── */
   #recording-overlay {
     position: fixed;
@@ -622,11 +619,13 @@
     <input type="color" id="color-picker" value="#ffffff" style="width:22px;height:22px;border:none;border-radius:50%;cursor:pointer;padding:0;flex-shrink:0;background:none">
   </div>
   <div class="tb-group" id="preset-group">
-    <button class="tb-btn preset-btn" data-preset="9:16" title="抖音 9:16">🎵</button>
-    <button class="tb-btn preset-btn" data-preset="3:4" title="小红书 3:4">📕</button>
-    <button class="tb-btn preset-btn" data-preset="6:7" title="视频号 6:7">📺</button>
-    <button class="tb-btn preset-btn" data-preset="16:9" title="横屏 16:9">🖥</button>
-    <button class="tb-btn preset-btn active" data-preset="free" title="自适应">↔</button>
+    <select id="preset-select" class="tb-select" title="画布比例">
+      <option value="9:16">抖音 9:16</option>
+      <option value="3:4">小红书 3:4</option>
+      <option value="6:7">视频号 6:7</option>
+      <option value="16:9">横屏 16:9</option>
+      <option value="free" selected>自适应</option>
+    </select>
   </div>
   <div class="tb-group">
     <button class="tb-btn" title="摄像头 (小镜头)" id="btn-camera">📷</button>
@@ -761,9 +760,7 @@ let currentPreset = 'free';
 
 function applyPreset(key) {
   currentPreset = key;
-  document.querySelectorAll('.preset-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.preset === key);
-  });
+  document.getElementById('preset-select').value = key;
   if (key === 'free') {
     canvasWrap.style.position = '';
     canvasWrap.style.width = '';
@@ -801,8 +798,8 @@ function applyPreset(key) {
   }
 }
 
-document.querySelectorAll('.preset-btn').forEach(btn => {
-  btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+document.getElementById('preset-select').addEventListener('change', (e) => {
+  applyPreset(e.target.value);
 });
 
 window.addEventListener('resize', () => {
