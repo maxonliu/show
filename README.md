@@ -66,4 +66,10 @@ ShowObjC/
 
 ---
 
-MIT
+## License
+
+本项目采用标准的 [MIT 开源协议](https://opensource.org/license/mit)。
+
+> MIT License — 自由使用、修改、分发、商用，保留版权声明即可。
+>
+> Copyright (c) 2025 Maxon
