@@ -211,7 +211,6 @@
       0 10px 40px rgba(0,0,0,0.35),
       0 30px 80px rgba(0,0,0,0.18),
       inset 0 1px 0 rgba(255,255,255,0.08);
-    transform: scale(1.02);
   }
   #camera-pip:active { cursor: grabbing; }
   #camera-pip video {
@@ -802,6 +801,7 @@ function applyPreset(key) {
 
 document.getElementById('preset-select').addEventListener('change', (e) => {
   applyPreset(e.target.value);
+  textEditor.focus();
 });
 
 window.addEventListener('resize', () => {
@@ -883,6 +883,7 @@ document.getElementById('color-picker').addEventListener('input', (e) => {
   document.body.style.background = c;
   document.documentElement.style.background = c;
   document.querySelectorAll('.tb-color').forEach(b => b.classList.remove('active'));
+  textEditor.focus();
 });
 
 // ─── Add Items ───
@@ -1058,10 +1059,17 @@ document.addEventListener('mousemove', (e) => {
   }
   if (cameraDragState) {
     const { canvasLeft, canvasTop } = cameraDragState;
-    const x = e.clientX - canvasLeft - cameraDragState.offsetX;
-    const y = e.clientY - canvasTop - cameraDragState.offsetY;
-    camPip.style.left = Math.max(0, x) + 'px';
-    camPip.style.top = Math.max(0, y) + 'px';
+    let x = e.clientX - canvasLeft - cameraDragState.offsetX;
+    let y = e.clientY - canvasTop - cameraDragState.offsetY;
+    // Clamp to canvas bounds so camera can't go outside preset area
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    const pw = parseInt(camPip.style.width) || camSettings.size;
+    const ph = parseInt(camPip.style.height) || camSettings.size;
+    x = Math.max(0, Math.min(x, cw - pw));
+    y = Math.max(0, Math.min(y, ch - ph));
+    camPip.style.left = x + 'px';
+    camPip.style.top = y + 'px';
     // Deselect position preset when custom-dragged
     camPosBtns.forEach(b => b.classList.remove('active'));
     camSettings.position = 'custom';
@@ -1417,6 +1425,7 @@ camResizeHandle.addEventListener('mousedown', (e) => {
 camSizeSlider.addEventListener('input', (e) => {
   camSettings.size = parseInt(e.target.value);
   document.getElementById('cam-size-val').textContent = camSettings.size;
+  localStorage.setItem('show-cam-size', camSettings.size);
   applyCamSettings();
 });
 
@@ -1883,6 +1892,14 @@ toolbar.addEventListener('mousedown', (e) => {
 });
 
 // ─── Init ───
+
+// Restore saved camera size
+const savedSize = parseInt(localStorage.getItem('show-cam-size'));
+if (savedSize && savedSize >= 80 && savedSize <= 400) {
+  camSettings.size = savedSize;
+  camSizeSlider.value = savedSize;
+  document.getElementById('cam-size-val').textContent = savedSize;
+}
 
 // Focus hidden textarea so paste events fire (WKWebView needs an editable element focused)
 textEditor.focus();
